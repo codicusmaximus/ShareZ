@@ -35,12 +35,14 @@ pub fn freeze() -> Result<Frame> {
     let lsb = setup.image_byte_order == ImageOrder::LSB_FIRST;
     let data = image
         .data
-        .chunks_exact(4)
-        .flat_map(|p| {
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|&[b0, b1, b2, b3]| {
             if lsb {
-                [p[2], p[1], p[0], 255]
+                [b2, b1, b0, 255]
             } else {
-                [p[1], p[2], p[3], 255]
+                [b1, b2, b3, 255]
             }
         })
         .collect();

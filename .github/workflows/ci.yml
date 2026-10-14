@@ -13,7 +13,7 @@ jobs:
     name: Lint and test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install system libraries
         run: |
           sudo apt-get update
@@ -39,7 +39,7 @@ jobs:
     name: Minimum supported Rust
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev
       - uses: dtolnay/rust-toolchain@1.92
       - uses: Swatinem/rust-cache@v2

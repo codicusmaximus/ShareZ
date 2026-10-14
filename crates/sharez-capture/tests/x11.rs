@@ -15,7 +15,7 @@ fn freezes_the_x11_root_window() {
         frame.width as usize * frame.height as usize * 4
     );
     assert!(
-        frame.data.chunks_exact(4).all(|p| p[3] == 255),
+        frame.data.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
         "frame must be opaque"
     );
 }
