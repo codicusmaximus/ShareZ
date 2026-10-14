@@ -1,3 +1,5 @@
 /target
 **/target
 sharez-spike-report/
+.flatpak-builder/
+build-dir/

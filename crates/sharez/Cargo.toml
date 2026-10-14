@@ -1,0 +1,18 @@
+[package]
+name = "sharez"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_5"] }
+gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
+serde_json = "1.0.154"
+sharez-capture = { version = "0.1.0", path = "../sharez-capture" }
+sharez-core = { version = "0.1.0", path = "../sharez-core" }
+sharez-windows = { version = "0.1.0", path = "../sharez-windows" }
+
+[lints]
+workspace = true

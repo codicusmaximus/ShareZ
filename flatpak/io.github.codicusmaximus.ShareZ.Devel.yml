@@ -1,0 +1,42 @@
+# Development manifest. It lets cargo fetch crates during the build, which is fine for local
+# builds but not for Flathub; a release manifest will vendor crates with flatpak-cargo-generator.
+#
+#   flatpak-builder --user --install --force-clean build-dir flatpak/io.github.codicusmaximus.ShareZ.Devel.yml
+#   flatpak run io.github.codicusmaximus.ShareZ
+id: io.github.codicusmaximus.ShareZ
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: sharez
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Desktop audio and microphone for recordings.
+  - --socket=pulseaudio
+  # KDE Plasma: window positions come from a KWin script loaded over D-Bus.
+  - --talk-name=org.kde.KWin
+  # GNOME: window positions and elements inside windows come from the accessibility tree.
+  - --talk-name=org.a11y.Bus
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  build-args:
+    - --share=network
+modules:
+  - name: sharez
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked
+      - install -Dm755 target/release/sharez -t /app/bin
+      - install -Dm644 data/io.github.codicusmaximus.ShareZ.desktop -t /app/share/applications
+      - install -Dm644 data/io.github.codicusmaximus.ShareZ.metainfo.xml -t /app/share/metainfo
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - target
+          - build-dir
+          - .flatpak-builder

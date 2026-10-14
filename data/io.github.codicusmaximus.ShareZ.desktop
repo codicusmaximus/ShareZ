@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=ShareZ
+Comment=Capture and record your screen
+Exec=sharez
+Icon=applets-screenshooter
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;
+Keywords=screenshot;screen;capture;record;screencast;
+StartupNotify=true

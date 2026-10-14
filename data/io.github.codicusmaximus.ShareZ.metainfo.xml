@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.codicusmaximus.ShareZ</id>
+  <name>ShareZ</name>
+  <summary>Capture and record your screen</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      ShareZ captures screenshots and recordings of regions, windows and elements inside
+      windows, on Wayland (GNOME and KDE Plasma) and X11.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.codicusmaximus.ShareZ.desktop</launchable>
+  <url type="homepage">https://github.com/codicusmaximus/ShareZ</url>
+  <content_rating type="oars-1.1"/>
+</component>

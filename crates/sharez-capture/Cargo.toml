@@ -1,0 +1,21 @@
+[package]
+name = "sharez-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
+png = "0.18.1"
+sharez-core = { version = "0.1.0", path = "../sharez-core" }
+thiserror = "2.0.21"
+url = "2.5.8"
+x11rb = "0.14.0"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+futures-lite = "2.6.1"
