@@ -40,7 +40,8 @@ cargo run --release -- --out report-$(echo $XDG_CURRENT_DESKTOP-$XDG_SESSION_TYP
 ```
 
 During the recording step, pick a monitor in the share dialog, play some audio and talk into the
-mic. Then run `record` a second time with the same `--out` to check that the dialog is skipped:
+mic. Then run `record` a second time with the same `--out` to check that the dialog is skipped
+(it is saved as `record_second_run` in the same report):
 
 ```sh
 cargo run --release -- --out report-... record
@@ -61,6 +62,9 @@ gnome-extensions enable sharez-spike@sharez.github.io
 ```
 
 Remove it afterwards with `gnome-extensions uninstall sharez-spike@sharez.github.io`.
+
+On a Wayland session the `x11` probe only sees XWayland apps, and its screen grab is expected to
+fail; that's recorded as a finding, not a problem with your setup.
 
 ## Sharing results
 

@@ -8,11 +8,14 @@ pub struct Report {
 }
 
 impl Report {
+    /// Re-running a single probe into the same directory updates that probe's entry and keeps
+    /// the others, so `all` followed by `record` leaves one complete report.
     pub fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            probes: BTreeMap::new(),
-        }
+        let probes = std::fs::read_to_string(dir.join("report.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Self { dir, probes }
     }
 
     /// Runs one probe. A failing probe is recorded, never fatal: a missing capability is a finding.
@@ -29,10 +32,29 @@ impl Report {
         if let Some(e) = entry.get("error") {
             eprintln!("   {}", e.as_str().unwrap_or_default());
         }
-        self.probes.insert(name.to_owned(), entry);
+        // A second `record` run is its own finding (did the restore token skip the dialog?).
+        let key = if name == "record" && self.probes.contains_key("record") {
+            "record_second_run".to_owned()
+        } else {
+            name.to_owned()
+        };
+        self.probes.insert(key, entry);
+        // Write after every probe so a hang or Ctrl+C later still leaves what we have.
+        if let Err(e) = self.write_quiet() {
+            eprintln!("   could not write report: {e:#}");
+        }
     }
 
     pub fn write(&self) -> anyhow::Result<()> {
+        self.write_quiet()?;
+        eprintln!(
+            "\nReport written to {}",
+            self.dir.join("report.md").display()
+        );
+        Ok(())
+    }
+
+    fn write_quiet(&self) -> anyhow::Result<()> {
         let json_path = self.dir.join("report.json");
         std::fs::write(&json_path, serde_json::to_string_pretty(&self.probes)?)?;
 
@@ -52,7 +74,6 @@ impl Report {
             md += &format!("```json\n{}\n```\n\n", serde_json::to_string_pretty(&body)?);
         }
         std::fs::write(self.dir.join("report.md"), md)?;
-        eprintln!("\nReport written to {}", json_path.display());
         Ok(())
     }
 }

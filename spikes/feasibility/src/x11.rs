@@ -114,8 +114,30 @@ pub async fn probe(out: &Path) -> anyhow::Result<Value> {
                 .collect::<Vec<_>>()
         });
 
-    // Full root grab: this is the "freeze the screen" step on X11.
+    // Full root grab: this is the "freeze the screen" step on X11. Under XWayland the root
+    // window usually has no contents to read, and GetImage fails with BadMatch.
     let (w, h) = (screen.width_in_pixels, screen.height_in_pixels);
+    let grab =
+        grab_root(&conn, root, w, h, out).unwrap_or_else(|e| json!({ "error": format!("{e:#}") }));
+
+    Ok(json!({
+        "xwayland_only": crate::env::session_type() == "wayland",
+        "window_manager": wm_name,
+        "root_size": [w, h],
+        "monitors": monitors,
+        "window_count": windows.len(),
+        "windows_top_to_bottom": windows,
+        "root_grab": grab,
+    }))
+}
+
+fn grab_root(
+    conn: &RustConnection,
+    root: Window,
+    w: u16,
+    h: u16,
+    out: &Path,
+) -> anyhow::Result<Value> {
     let start = Instant::now();
     let img = conn
         .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, w, h, !0)?
@@ -143,14 +165,9 @@ pub async fn probe(out: &Path) -> anyhow::Result<Value> {
     enc.write_header()?.write_image_data(&rgb)?;
 
     Ok(json!({
-        "window_manager": wm_name,
-        "root_size": [w, h],
+        "ms": grab_ms,
         "depth": img.depth,
-        "monitors": monitors,
-        "window_count": windows.len(),
-        "windows_top_to_bottom": windows,
-        "root_grab_ms": grab_ms,
-        "root_grab_nonblack_fraction": nonblack as f64 / (w as f64 * h as f64),
-        "root_grab_file": path,
+        "nonblack_fraction": nonblack as f64 / (w as f64 * h as f64),
+        "file": path,
     }))
 }

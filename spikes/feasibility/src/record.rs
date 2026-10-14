@@ -7,11 +7,10 @@
 //! will use gstreamer-rs or PipeWire directly.
 
 use std::{
-    io::Read,
     os::fd::{AsRawFd, RawFd},
     os::unix::process::CommandExt,
     path::Path,
-    process::{Command, Stdio},
+    process::Command,
     time::Duration,
 };
 
@@ -56,6 +55,28 @@ fn audio_branches(have_pulse: bool) -> String {
     .join(" ")
 }
 
+const EOS_GRACE: Duration = Duration::from_secs(6);
+
+enum Stopped {
+    Exited(std::process::ExitStatus),
+    Killed(std::process::ExitStatus),
+}
+
+/// SIGINT makes `gst-launch -e` send EOS so the file is finalised properly. If EOS never
+/// completes (a source that stopped producing data, for example), kill it rather than hang.
+fn stop(child: &mut std::process::Child) -> anyhow::Result<Stopped> {
+    unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
+    let deadline = std::time::Instant::now() + EOS_GRACE;
+    while std::time::Instant::now() < deadline {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Stopped::Exited(status));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    child.kill()?;
+    Ok(Stopped::Killed(child.wait()?))
+}
+
 fn run_gst(
     pipeline: &str,
     pass_fd: Option<RawFd>,
@@ -64,7 +85,10 @@ fn run_gst(
 ) -> anyhow::Result<Value> {
     let mut cmd = Command::new("gst-launch-1.0");
     cmd.arg("-e").arg("-v").args(pipeline.split_whitespace());
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Log to a file, not a pipe: `-v` prints a lot, and a full pipe blocks gst-launch forever.
+    let log_path = out_file.with_extension("gst.log");
+    let log_file = std::fs::File::create(&log_path)?;
+    cmd.stdout(log_file.try_clone()?).stderr(log_file);
     if let Some(fd) = pass_fd {
         // SAFETY: dup2 is async-signal-safe; it places the PipeWire fd at a fixed number in the child.
         unsafe {
@@ -81,18 +105,18 @@ fn run_gst(
     let deadline = std::time::Instant::now() + Duration::from_secs(seconds);
     let status = loop {
         if let Some(status) = child.try_wait()? {
-            break status; // exited early: almost certainly a pipeline error
+            break Stopped::Exited(status); // exited early: almost certainly a pipeline error
         }
         if std::time::Instant::now() >= deadline {
-            // SIGINT makes `gst-launch -e` send EOS so the file is finalised properly.
-            unsafe { libc::kill(child.id() as i32, libc::SIGINT) };
-            break child.wait()?;
+            break stop(&mut child)?;
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let mut log = String::new();
-    child.stdout.take().unwrap().read_to_string(&mut log)?;
-    child.stderr.take().unwrap().read_to_string(&mut log)?;
+    let (status, eos_finished) = match status {
+        Stopped::Exited(s) => (s, true),
+        Stopped::Killed(s) => (s, false),
+    };
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
 
     let caps: Vec<&str> = log
         .lines()
@@ -122,6 +146,13 @@ fn run_gst(
         .filter(|l| l.contains("ERROR") || l.contains("WARNING"))
         .take(10)
         .collect();
+    if !eos_finished {
+        bail!(
+            "gst-launch did not finish within {EOS_GRACE:?} of stopping, so it was killed \
+             (the file may be unplayable). Last log lines: {}\npipeline: {pipeline}",
+            log.lines().rev().take(8).collect::<Vec<_>>().join(" | ")
+        );
+    }
     if !status.success() || !out_file.exists() {
         bail!(
             "gst-launch failed ({status}): {}\npipeline: {pipeline}",
@@ -135,6 +166,7 @@ fn run_gst(
         "negotiated_caps": caps,
         "warnings": errors,
         "file": out_file,
+        "log_file": log_path,
         "file_bytes": std::fs::metadata(out_file).map(|m| m.len()).ok(),
         "ffprobe": probe,
     }))
