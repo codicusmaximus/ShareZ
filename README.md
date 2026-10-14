@@ -3,7 +3,8 @@
 A screen capture and recording tool for Linux, in the spirit of [ShareX](https://getsharex.com/).
 It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 
-> **Status:** early planning. Nothing usable yet.
+> **Status:** early development. The feasibility spike is done and the application skeleton is
+> in place; nothing is useful to end users yet.
 
 ## Goals
 
@@ -22,6 +23,25 @@ It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 2. Architecture and repository skeleton.
 3. Region screenshot release.
 4. Region video recording.
+
+## Building
+
+You need Rust 1.92 or newer, GTK 4.14+ and libadwaita 1.5+ development files.
+
+```sh
+# Fedora
+sudo dnf install gtk4-devel libadwaita-devel
+# Debian / Ubuntu
+sudo apt install libgtk-4-dev libadwaita-1-dev
+# Arch
+sudo pacman -S gtk4 libadwaita
+
+cargo run                      # the app
+cargo run -- --list-windows    # print the windows ShareZ can snap to, as JSON
+```
+
+To build a Flatpak locally, see [`flatpak/`](flatpak/io.github.codicusmaximus.ShareZ.Devel.yml).
+How the code is organised is in [docs/architecture.md](docs/architecture.md).
 
 ## License
 
