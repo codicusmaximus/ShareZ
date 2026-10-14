@@ -1,0 +1,7 @@
+{
+  "uuid": "sharez-spike@sharez.github.io",
+  "name": "ShareZ spike helper",
+  "description": "Throwaway helper for the ShareZ feasibility spike: exposes window rectangles over D-Bus.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/codicusmaximus/ShareZ"
+}
