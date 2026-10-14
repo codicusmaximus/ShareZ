@@ -149,10 +149,14 @@ async fn walk_app(conn: &Connection, app: &Node, deadline: Instant) -> Value {
     let mut hit_test = None;
     let mut roles: BTreeMap<String, usize> = BTreeMap::new();
     let mut samples = Vec::new();
+    let is_shell = name == "gnome-shell";
+    let max_nodes = if is_shell { 15_000 } else { MAX_NODES_PER_APP };
+    let mut shell_windows = Vec::new();
+    let mut toplevels = Vec::new();
     let mut stopped = None;
 
     while let Some((node, depth)) = queue.pop_front() {
-        if nodes >= MAX_NODES_PER_APP {
+        if nodes >= max_nodes {
             stopped = Some("node cap");
             break;
         }
@@ -187,6 +191,22 @@ async fn walk_app(conn: &Connection, app: &Node, deadline: Instant) -> Value {
                 if hit_test.is_none() && matches!(role.as_str(), "frame" | "window" | "dialog") {
                     hit_test = Some(hit_test_centre(conn, &node).await);
                 }
+                // GNOME Shell's own tree has one panel per window actor ("Wayland window" /
+                // "X11 window") with its on-screen rectangle: window geometry without an extension.
+                if is_shell && role == "panel" {
+                    let label = name_of(conn, &node).await;
+                    if label.ends_with(" window") {
+                        shell_windows
+                            .push(json!({ "name": label, "rect": screen, "depth": depth }));
+                    }
+                }
+                // App toplevels, to match against the shell's rectangles by size.
+                if depth == 1 {
+                    let label = name_of(conn, &node).await;
+                    toplevels.push(
+                        json!({ "role": role, "name": label, "screen": screen, "window": window }),
+                    );
+                }
                 if samples.len() < 12 && depth >= 2 {
                     let label = name_of(conn, &node).await;
                     samples.push(json!({ "role": role, "name": label, "screen": screen, "window": window, "depth": depth }));
@@ -220,6 +240,8 @@ async fn walk_app(conn: &Connection, app: &Node, deadline: Instant) -> Value {
         "stopped_early": stopped,
         "top_roles": top_roles,
         "samples": samples,
+        "toplevels": toplevels,
+        "shell_windows": if is_shell { json!(shell_windows) } else { Value::Null },
     })
 }
 
