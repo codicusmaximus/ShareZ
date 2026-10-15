@@ -4,15 +4,19 @@
 //! (all confirmed in the feasibility spike):
 //!
 //! - **KDE Plasma:** a temporary KWin script that reports the window stack back over D-Bus.
-//! - **GNOME:** GNOME Shell's own accessibility tree, which has one panel per window actor with
-//!   its on-screen rectangle. `org.gnome.Shell.Introspect` is denied to normal apps.
+//! - **GNOME:** the ShareZ Helper shell extension, or without it GNOME Shell's own accessibility
+//!   tree. `org.gnome.Shell.Introspect` is denied to normal apps.
 //! - **X11:** EWMH properties on the root window.
 
+mod a11y;
 mod dbus;
+mod elements;
 mod ewmh;
 mod gnome;
 mod kwin;
 
+pub use a11y::ensure_enabled as ensure_accessibility;
+pub use elements::{Elements, Target};
 use serde::Serialize;
 use sharez_core::{Desktop, DisplayServer, Rect, Session};
 
@@ -32,7 +36,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowKind {
     Normal,
@@ -53,7 +57,8 @@ pub struct Window {
     pub pid: Option<u32>,
     pub kind: WindowKind,
     /// The visible window including server-side decorations, in logical pixels.
-    /// On GNOME this still includes client-side shadows; see [`Window::shadow_included`].
+    /// From GNOME Shell's accessibility tree this still includes client-side shadows; see
+    /// [`Window::shadow_included`].
     pub frame: Rect,
     /// The client area without server-side decorations, when the source knows it.
     pub client: Option<Rect>,
@@ -84,7 +89,8 @@ impl Source {
         }
     }
 
-    /// Lists windows, topmost first where the source knows the stacking order.
+    /// Lists windows, topmost first where the source knows the stacking order (everywhere except
+    /// GNOME without the helper extension).
     pub async fn windows(self) -> Result<Vec<Window>> {
         match self {
             Self::Kwin => kwin::windows().await,
