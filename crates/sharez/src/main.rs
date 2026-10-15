@@ -444,14 +444,19 @@ fn add_actions(ui: &Rc<Ui>) {
     ui.app
         .set_accels_for_action("window.close", &["<Control>w"]);
 
-    // A notification's "open the file".
-    let open = gio::SimpleAction::new("open-file", Some(glib::VariantTy::STRING));
-    open.connect_activate(|_, path| {
-        if let Some(path) = path.and_then(glib::Variant::get::<String>) {
-            output::open(std::path::Path::new(&path));
-        }
-    });
-    ui.app.add_action(&open);
+    // A notification's "open the file" and "show it in its folder".
+    for (name, reveal) in [
+        ("open-file", output::Reveal::Open),
+        ("show-file", output::Reveal::InFolder),
+    ] {
+        let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+        action.connect_activate(move |_, path| {
+            if let Some(path) = path.and_then(glib::Variant::get::<String>) {
+                reveal.run(std::path::Path::new(&path));
+            }
+        });
+        ui.app.add_action(&action);
+    }
 }
 
 fn connect(ui: &Rc<Ui>) {
@@ -715,12 +720,12 @@ impl Ui {
     }
 
     /// The window's toast if it is showing, otherwise a notification.
-    fn tell_saved(&self, title: &str, path: PathBuf, shown: bool) {
+    fn tell_saved(&self, title: &str, path: PathBuf, shown: bool, reveal: output::Reveal) {
         if shown {
-            self.toasts.add_toast(output::saved_toast(path));
+            self.toasts.add_toast(output::saved_toast(path, reveal));
         } else {
             self.app
-                .send_notification(None, &output::saved_notification(title, &path));
+                .send_notification(None, &output::saved_notification(title, &path, reveal));
         }
     }
 
@@ -881,7 +886,7 @@ async fn capture_screen(ui: &Rc<Ui>) {
         Err(e) => Err(e),
     };
     match saved {
-        Ok(path) => ui.tell_saved("Screenshot copied", path, shown),
+        Ok(path) => ui.tell_saved("Screenshot copied", path, shown, output::Reveal::Open),
         Err(e) => {
             ui.window.present();
             let dialog = adw::AlertDialog::new(Some("Capture Failed"), Some(&e));
@@ -973,7 +978,7 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
         ui.window.present();
     }
     match saved {
-        Some(path) => ui.tell_saved("Recording copied", path, shown),
+        Some(path) => ui.tell_saved("Recording copied", path, shown, output::Reveal::InFolder),
         None if shown => ui.toasts.add_toast(adw::Toast::new("Recording discarded")),
         None => {}
     }
