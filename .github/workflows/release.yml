@@ -1,0 +1,92 @@
+name: Packages
+
+# Builds the .deb, .rpm and Arch packages, installs each one on a clean copy of its distribution,
+# and on a v* tag publishes them as a GitHub release with packaging/RELEASE_NOTES.md.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - packaging/**
+      - .github/workflows/release.yml
+      - data/**
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  NFPM_VERSION: 2.43.0
+
+jobs:
+  build:
+    name: Build packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install nfpm
+        run: |
+          curl -sSfL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin nfpm
+      - run: ./packaging/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/
+          if-no-files-found: error
+
+  install:
+    name: Install on ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:24.04
+            install: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y ./dist/*.deb gstreamer1.0-tools
+          - image: debian:trixie
+            install: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y ./dist/*.deb gstreamer1.0-tools
+          - image: fedora:latest
+            install: dnf install -y ./dist/*.rpm
+          - image: archlinux:latest
+            install: pacman -Syu --noconfirm && pacman -U --noconfirm ./dist/*.pkg.tar.zst
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Install the package with the distribution's package manager
+        run: ${{ matrix.install }}
+      - run: sh packaging/check-install.sh
+
+  release:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: install
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "ShareZ ${GITHUB_REF_NAME#v}" \
+            --notes-file packaging/RELEASE_NOTES.md

@@ -3,3 +3,4 @@
 sharez-spike-report/
 .flatpak-builder/
 build-dir/
+/dist

@@ -8,6 +8,22 @@ It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 > region or click a window or an element inside one. Screenshots go to `~/Pictures/ShareZ`,
 > recordings to `~/Videos/ShareZ`, and either is always copied to the clipboard.
 
+## Install
+
+Download the package for your distribution from the
+[latest release](https://github.com/codicusmaximus/ShareZ/releases/latest) and install it with your
+package manager, which brings in everything ShareZ needs:
+
+```sh
+sudo apt install ./sharez_*_amd64.deb             # Ubuntu 24.04+, Debian 13+
+sudo dnf install ./sharez-*.x86_64.rpm            # Fedora 40+
+sudo pacman -U ./sharez-*-x86_64.pkg.tar.zst      # Arch
+```
+
+On GNOME, log out and back in once afterwards so GNOME picks up ShareZ's helper extension. The
+release notes ([`packaging/RELEASE_NOTES.md`](packaging/RELEASE_NOTES.md)) cover optional MP4
+support and uninstalling.
+
 ## Goals
 
 - **Smart region capture**: hover and click a window, or an element inside a window, and ShareZ
@@ -97,8 +113,9 @@ GNOME doesn't let normal apps see which window is on top. Without help ShareZ gu
 highlight a window that is behind another one, and has nowhere for a tray icon. The small ShareZ
 Helper shell extension in [`gnome-extension/`](gnome-extension/) tells it the real stacking order
 and exact window edges, captures a clicked window even where others cover it, places the outline
-around a region being recorded, and shows ShareZ's top-bar icon. `./install.sh` installs it for you, or copy it yourself (again after updating
-ShareZ):
+around a region being recorded, and shows ShareZ's top-bar icon. The packages and `./install.sh`
+install it, and ShareZ turns it on when it starts (GNOME only sees a newly installed extension
+after you log out and back in). To install it by hand (again after updating ShareZ):
 
 ```sh
 cp -r gnome-extension/sharez-helper@codicusmaximus.github.io ~/.local/share/gnome-shell/extensions/
@@ -107,7 +124,7 @@ gnome-extensions enable sharez-helper@codicusmaximus.github.io
 ```
 
 KDE Plasma and X11 need nothing extra. On KDE, a clicked window is captured on its own only when
-ShareZ runs from its installed launcher entry (`./install.sh`), because KWin checks the entry
+ShareZ runs from its installed launcher entry (a package or `./install.sh`), because KWin checks the entry
 before it allows that; on X11 it needs a compositor. Otherwise ShareZ takes the region as it was
 on screen.
 
@@ -151,6 +168,10 @@ To use ShareZ day to day, install it for your user with `./install.sh`. It build
 `sharez` in `~/.local/bin`, adds it to your app launcher, and on GNOME installs the helper
 extension. The launcher entry matters on Wayland: GNOME's shortcut dialog and notifications find
 apps by it.
+
+To build the release packages (.deb, .rpm, Arch), install [nfpm](https://nfpm.goreleaser.com)
+and run `packaging/build.sh` on Ubuntu 24.04; they land in `dist/`. Pushing a `v*` tag builds
+them in CI, installs each on a clean Debian, Ubuntu, Fedora and Arch, and publishes the release.
 
 To build a Flatpak locally, see [`flatpak/`](flatpak/io.github.codicusmaximus.ShareZ.Devel.yml).
 How the code is organised is in [docs/architecture.md](docs/architecture.md).

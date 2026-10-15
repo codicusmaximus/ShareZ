@@ -1,0 +1,85 @@
+# Packages a release build of ShareZ as .deb, .rpm and an Arch package with nfpm
+# (https://nfpm.goreleaser.com). packaging/build.sh runs it; the release workflow calls that.
+#
+# The binary is built on Ubuntu 24.04 (glibc 2.39, GTK 4.14, libadwaita 1.5), so the packages
+# install on Ubuntu 24.04+, Debian 13+, Fedora 40+ and current Arch. Each package names the
+# distribution's own libraries and GStreamer plugins, so the package manager installs them.
+name: sharez
+arch: amd64
+platform: linux
+version: ${SHAREZ_VERSION}
+release: 1
+maintainer: ShareZ <https://github.com/codicusmaximus/ShareZ>
+description: |-
+  Capture and record your screen.
+  Screenshots and recordings of regions, windows and elements inside windows, on Wayland
+  (GNOME and KDE Plasma) and X11, with global shortcuts and a tray icon.
+homepage: https://github.com/codicusmaximus/ShareZ
+license: GPL-3.0-or-later
+section: graphics
+
+contents:
+  - src: target/release/sharez
+    dst: /usr/bin/sharez
+    file_info:
+      mode: 0755
+  - src: data/io.github.codicusmaximus.ShareZ.desktop
+    dst: /usr/share/applications/io.github.codicusmaximus.ShareZ.desktop
+  - src: data/io.github.codicusmaximus.ShareZ.metainfo.xml
+    dst: /usr/share/metainfo/io.github.codicusmaximus.ShareZ.metainfo.xml
+  # The GNOME Shell helper; ShareZ turns it on itself once GNOME has seen it (after a login).
+  - src: gnome-extension/sharez-helper@codicusmaximus.github.io/extension.js
+    dst: /usr/share/gnome-shell/extensions/sharez-helper@codicusmaximus.github.io/extension.js
+  - src: gnome-extension/sharez-helper@codicusmaximus.github.io/metadata.json
+    dst: /usr/share/gnome-shell/extensions/sharez-helper@codicusmaximus.github.io/metadata.json
+  - src: LICENSE
+    dst: /usr/share/licenses/sharez/LICENSE
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.39)
+      - libgtk-4-1 (>= 4.14)
+      - libadwaita-1-0 (>= 1.5)
+      - libgstreamer1.0-0
+      - gstreamer1.0-plugins-base
+      - gstreamer1.0-plugins-good
+      - gstreamer1.0-pulseaudio
+      - gstreamer1.0-pipewire
+      - xdg-desktop-portal
+    recommends:
+      # H.264 in MP4 (otherwise ShareZ records VP8 in WebM) and AAC audio.
+      - gstreamer1.0-plugins-ugly
+      - gstreamer1.0-plugins-bad
+      - gstreamer1.0-libav
+  rpm:
+    depends:
+      - glibc >= 2.39
+      - gtk4 >= 4.14
+      - libadwaita >= 1.5
+      - gstreamer1
+      - gstreamer1-plugins-base
+      - gstreamer1-plugins-good
+      - pipewire-gstreamer
+      - xdg-desktop-portal
+    recommends:
+      - gstreamer1-plugin-openh264
+      - gstreamer1-plugins-bad-free
+  archlinux:
+    depends:
+      - glibc
+      - gtk4
+      - libadwaita
+      - gstreamer
+      - gst-plugins-base
+      - gst-plugins-good
+      - gst-plugin-pipewire
+      - xdg-desktop-portal
+    # nfpm has no optdepends; the install notes give the command for H.264 and AAC.
+
+rpm:
+  group: Applications/Multimedia
+  compression: zstd
+
+archlinux:
+  packager: ShareZ <https://github.com/codicusmaximus/ShareZ>

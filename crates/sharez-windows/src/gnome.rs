@@ -67,6 +67,38 @@ pub async fn helper_features() -> Vec<String> {
         .unwrap_or_default()
 }
 
+const HELPER_UUID: &str = "sharez-helper@codicusmaximus.github.io";
+/// `ExtensionState.ACTIVE` in GNOME Shell's extension API.
+const ACTIVE: f64 = 1.0;
+
+/// Turns the helper extension on when it is installed but off, as it is after a package install.
+/// GNOME only knows about extensions installed before the session started, so a new install
+/// takes effect after the next login. `Ok(true)` if it was turned on now.
+pub async fn enable_helper() -> Result<bool> {
+    let conn = Connection::session().await?;
+    let (dest, path, iface) = (
+        "org.gnome.Shell.Extensions",
+        "/org/gnome/Shell/Extensions",
+        "org.gnome.Shell.Extensions",
+    );
+    let info: std::collections::HashMap<String, zbus::zvariant::OwnedValue> = call(
+        &conn,
+        dest,
+        path,
+        iface,
+        "GetExtensionInfo",
+        &(HELPER_UUID,),
+    )
+    .await?;
+    let Some(state) = info.get("state").and_then(|v| f64::try_from(&**v).ok()) else {
+        return Ok(false); // Not installed, or GNOME hasn't seen it yet.
+    };
+    if (state - ACTIVE).abs() < f64::EPSILON {
+        return Ok(false);
+    }
+    call(&conn, dest, path, iface, "EnableExtension", &(HELPER_UUID,)).await
+}
+
 /// Tells the helper's top-bar icon whether ShareZ is recording.
 pub async fn helper_set_recording(recording: bool) -> Result<()> {
     let conn = Connection::session().await?;
