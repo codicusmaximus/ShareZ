@@ -14,10 +14,14 @@ fn path() -> PathBuf {
     glib::user_config_dir().join("sharez").join("settings.ini")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub desktop_audio: bool,
     pub microphone: bool,
+    /// Count 3, 2, 1 over the region before recording starts.
+    pub countdown: bool,
+    /// How fast the countdown runs: 1 is one number a second.
+    pub countdown_speed: f64,
     /// The keys for each shortcut on X11, in the shortcuts spec's form. On Wayland the desktop
     /// keeps them instead.
     pub shortcuts: Vec<(Hotkey, String)>,
@@ -28,6 +32,8 @@ impl Default for Settings {
         Self {
             desktop_audio: true,
             microphone: false,
+            countdown: false,
+            countdown_speed: 1.5,
             shortcuts: Hotkey::ALL
                 .into_iter()
                 .map(|h| (h, h.default_trigger().to_owned()))
@@ -50,6 +56,12 @@ impl Settings {
             if let Ok(v) = file.boolean(RECORD, "microphone") {
                 s.microphone = v;
             }
+            if let Ok(v) = file.boolean(RECORD, "countdown") {
+                s.countdown = v;
+            }
+            if let Ok(v) = file.double(RECORD, "countdown-speed") {
+                s.countdown_speed = snap_speed(v);
+            }
             for (hotkey, keys) in &mut s.shortcuts {
                 if let Ok(v) = file.string(SHORTCUTS, hotkey.id())
                     && Trigger::parse(&v).is_some()
@@ -65,6 +77,8 @@ impl Settings {
         let file = glib::KeyFile::new();
         file.set_boolean(RECORD, "desktop-audio", self.desktop_audio);
         file.set_boolean(RECORD, "microphone", self.microphone);
+        file.set_boolean(RECORD, "countdown", self.countdown);
+        file.set_double(RECORD, "countdown-speed", self.countdown_speed);
         for (hotkey, keys) in &self.shortcuts {
             file.set_string(SHORTCUTS, hotkey.id(), keys);
         }
@@ -75,6 +89,19 @@ impl Settings {
         if let Err(e) = file.save_to_file(&path) {
             eprintln!("Could not save {}: {e}", path.display());
         }
+    }
+}
+
+/// The countdown speeds offered: 0.25× to 2× in quarter steps.
+pub const SPEEDS: (f64, f64, f64) = (0.25, 2.0, 0.25);
+
+/// The nearest offered speed.
+pub fn snap_speed(v: f64) -> f64 {
+    let (min, max, step) = SPEEDS;
+    if v.is_finite() {
+        ((v / step).round() * step).clamp(min, max)
+    } else {
+        1.0
     }
 }
 
@@ -124,6 +151,14 @@ fn autostart_entry(exe: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speeds_snap_to_quarters() {
+        assert!((snap_speed(1.4) - 1.5).abs() < f64::EPSILON);
+        assert!((snap_speed(0.0) - 0.25).abs() < f64::EPSILON);
+        assert!((snap_speed(9.0) - 2.0).abs() < f64::EPSILON);
+        assert!((snap_speed(f64::NAN) - 1.0).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn autostart_runs_in_the_background() {

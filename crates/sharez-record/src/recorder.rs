@@ -75,11 +75,12 @@ fn check(video: &VideoIn, audio: &[AudioIn], format: Format) -> Result<()> {
 }
 
 impl Recorder {
-    /// Starts recording `region` of the screen. Both rectangles are logical; `screen` is the
-    /// whole desktop, used when the portal doesn't say which part of it was shared.
+    /// Gets ready to record `region` of the screen: everything is set up, but nothing is
+    /// recorded until [`Recorder::begin`]. Both rectangles are logical; `screen` is the whole
+    /// desktop, used when the portal doesn't say which part of it was shared.
     ///
     /// On Wayland the desktop may first ask which screen to share.
-    pub async fn start(
+    pub async fn prepare(
         session: &Session,
         region: Rect,
         screen: Rect,
@@ -203,11 +204,28 @@ impl Recorder {
                 });
             }
         }
-        if let Err(e) = pipeline.set_state(gst::State::Playing) {
+        // Paused opens the devices and the file, so problems show before anything is recorded;
+        // live sources only start producing once playing.
+        if let Err(e) = pipeline.set_state(gst::State::Paused) {
             let _ = pipeline.set_state(gst::State::Null);
             return Err(e.into());
         }
         Ok(pipeline)
+    }
+
+    /// Starts recording. The video's first frame is the first one after this.
+    pub fn begin(&self) -> Result<()> {
+        self.pipeline.set_state(gst::State::Playing)?;
+        Ok(())
+    }
+
+    /// Abandons a recording, begun or not, and deletes its file.
+    pub async fn cancel(self) {
+        let _ = self.pipeline.set_state(gst::State::Null);
+        if let Some(cast) = self.cast {
+            cast.close().await;
+        }
+        let _ = std::fs::remove_file(&self.path);
     }
 
     /// Records until `stop` says otherwise (or closes, which saves), then finishes the file.
@@ -411,11 +429,49 @@ mod tests {
             area: Rect::new(0.0, 0.0, 160.0, 120.0),
             region: Rect::new(10.0, 10.0, 51.0, 40.0),
         };
-        Recorder {
+        let recorder = Recorder {
             pipeline: Recorder::launch(&video, &audio, &options, format, crop).unwrap(),
             path,
             cast: None,
-        }
+        };
+        recorder.begin().unwrap();
+        recorder
+    }
+
+    /// A countdown that is interrupted leaves no file behind.
+    #[test]
+    fn cancelling_before_beginning_leaves_nothing() {
+        crate::init().unwrap();
+        let format = Format::detect().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "sharez-test-{}-cancel.{}",
+            std::process::id(),
+            format.extension()
+        ));
+        let options = Options {
+            audio: Audio {
+                desktop: false,
+                microphone: false,
+            },
+            fps: 30,
+            path: path.clone(),
+        };
+        let video = VideoIn::Test {
+            width: 64,
+            height: 48,
+        };
+        let crop = Crop::Exact {
+            width: 64,
+            height: 48,
+        };
+        let recorder = Recorder {
+            pipeline: Recorder::launch(&video, &[], &options, format, crop).unwrap(),
+            path: path.clone(),
+            cast: None,
+        };
+        assert_eq!(recorder.pipeline.current_state(), gst::State::Paused);
+        async_io::block_on(recorder.cancel());
+        assert!(!path.exists());
     }
 
     /// Runs `recorder`, doing `meanwhile` after a second and a half and then saving.

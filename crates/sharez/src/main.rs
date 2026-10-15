@@ -1,6 +1,7 @@
 //! The ShareZ application. It keeps running in the background once started, reachable from its
 //! top-bar or tray icon and its global shortcuts.
 
+mod countdown;
 mod hotkeys;
 mod outline;
 mod output;
@@ -136,6 +137,8 @@ struct Ui {
     discard: gtk::Button,
     desktop_audio: adw::SwitchRow,
     microphone: adw::SwitchRow,
+    countdown: adw::ExpanderRow,
+    countdown_speed: gtk::Scale,
     shortcut_group: adw::PreferencesGroup,
     shortcut_rows: Vec<(Hotkey, adw::ActionRow)>,
     change_shortcuts: gtk::Button,
@@ -166,8 +169,16 @@ fn startup(app: &adw::Application) {
     glib::spawn_future_local(start_services(ui));
 }
 
-/// What to record besides the picture.
-fn audio_group(settings: &Settings) -> (adw::PreferencesGroup, adw::SwitchRow, adw::SwitchRow) {
+/// The recording options: what to record besides the picture, and the countdown.
+struct RecordingRows {
+    group: adw::PreferencesGroup,
+    desktop_audio: adw::SwitchRow,
+    microphone: adw::SwitchRow,
+    countdown: adw::ExpanderRow,
+    countdown_speed: gtk::Scale,
+}
+
+fn recording_group(settings: &Settings) -> RecordingRows {
     let desktop_audio = adw::SwitchRow::builder()
         .title("Desktop Audio")
         .subtitle("What you hear")
@@ -177,12 +188,54 @@ fn audio_group(settings: &Settings) -> (adw::PreferencesGroup, adw::SwitchRow, a
         .title("Microphone")
         .active(settings.microphone)
         .build();
-    let audio = adw::PreferencesGroup::builder()
-        .title("Recording Audio")
+    let (countdown, countdown_speed) = countdown_rows(settings);
+    let group = adw::PreferencesGroup::builder().title("Recording").build();
+    group.add(&desktop_audio);
+    group.add(&microphone);
+    group.add(&countdown);
+    RecordingRows {
+        group,
+        desktop_audio,
+        microphone,
+        countdown,
+        countdown_speed,
+    }
+}
+
+/// A switch for the 3-2-1 countdown, with its speed inside.
+fn countdown_rows(settings: &Settings) -> (adw::ExpanderRow, gtk::Scale) {
+    let (min, max, step) = settings::SPEEDS;
+    let speed = gtk::Scale::with_range(gtk::Orientation::Horizontal, min, max, step);
+    speed.set_value(settings.countdown_speed);
+    speed.set_digits(2);
+    speed.set_draw_value(true);
+    speed.set_value_pos(gtk::PositionType::Right);
+    speed.set_round_digits(2);
+    speed.set_hexpand(true);
+    speed.set_valign(gtk::Align::Center);
+    speed.set_width_request(200);
+    speed.set_format_value_func(|_, v| format!("{v}×"));
+    speed.add_mark(1.0, gtk::PositionType::Bottom, None);
+    // The scale moves smoothly; keep it on the quarter steps.
+    speed.connect_value_changed(|s| {
+        let snapped = settings::snap_speed(s.value());
+        if (snapped - s.value()).abs() > f64::EPSILON {
+            s.set_value(snapped);
+        }
+    });
+    let speed_row = adw::ActionRow::builder()
+        .title("Speed")
+        .subtitle("1× is one number a second")
         .build();
-    audio.add(&desktop_audio);
-    audio.add(&microphone);
-    (audio, desktop_audio, microphone)
+    speed_row.add_suffix(&speed);
+    let countdown = adw::ExpanderRow::builder()
+        .title("Countdown")
+        .subtitle("Show 3, 2, 1 over the region before recording starts")
+        .show_enable_switch(true)
+        .enable_expansion(settings.countdown)
+        .build();
+    countdown.add_row(&speed_row);
+    (countdown, speed)
 }
 
 /// The shortcuts and their keys, with a button for the desktop's own settings where it has them.
@@ -252,7 +305,7 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
     buttons.append(&discard);
 
     let settings = Settings::load();
-    let (audio, desktop_audio, microphone) = audio_group(&settings);
+    let recording = recording_group(&settings);
 
     let (shortcut_group, change_shortcuts, shortcut_rows) = shortcuts_group();
     let (background, login) = background_group();
@@ -261,7 +314,7 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         .orientation(gtk::Orientation::Vertical)
         .spacing(24)
         .build();
-    groups.append(&audio);
+    groups.append(&recording.group);
     groups.append(&shortcut_group);
     groups.append(&background);
     let content = gtk::Box::builder()
@@ -324,8 +377,10 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         capture,
         record,
         discard,
-        desktop_audio,
-        microphone,
+        desktop_audio: recording.desktop_audio,
+        microphone: recording.microphone,
+        countdown: recording.countdown,
+        countdown_speed: recording.countdown_speed,
         shortcut_group,
         shortcut_rows,
         change_shortcuts,
@@ -407,12 +462,19 @@ fn connect(ui: &Rc<Ui>) {
             let mut settings = ui.settings.borrow_mut();
             settings.desktop_audio = ui.desktop_audio.is_active();
             settings.microphone = ui.microphone.is_active();
+            settings.countdown = ui.countdown.enables_expansion();
+            settings.countdown_speed = settings::snap_speed(ui.countdown_speed.value());
             settings.save();
         }
     );
-    let save2 = save.clone();
-    ui.desktop_audio.connect_active_notify(move |_| save());
-    ui.microphone.connect_active_notify(move |_| save2());
+    let save = Rc::new(save);
+    let s = Rc::clone(&save);
+    ui.desktop_audio.connect_active_notify(move |_| s());
+    let s = Rc::clone(&save);
+    ui.microphone.connect_active_notify(move |_| s());
+    let s = Rc::clone(&save);
+    ui.countdown.connect_enable_expansion_notify(move |_| s());
+    ui.countdown_speed.connect_value_changed(move |_| save());
 
     ui.banner.connect_button_clicked(glib::clone!(
         #[weak]
@@ -672,6 +734,7 @@ impl Ui {
         self.capture.set_sensitive(!recording);
         self.desktop_audio.set_sensitive(!recording);
         self.microphone.set_sensitive(!recording);
+        self.countdown.set_sensitive(!recording);
         self.discard.set_visible(recording);
         self.record.set_label(if recording {
             "Stop Recording"
@@ -852,7 +915,7 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
         fps: FPS,
         path: output::new_file(glib::UserDirectory::Videos, format.extension())?,
     };
-    let recorder = Recorder::start(
+    let recorder = Recorder::prepare(
         &session,
         selection.logical,
         selection.screen,
@@ -869,6 +932,32 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
         ui.window.set_visible(true);
     }
     let outline = outline::show(&session, selection.logical).await;
+    let countdown = {
+        let settings = ui.settings.borrow();
+        settings.countdown.then_some(settings.countdown_speed)
+    };
+    let stopped = match countdown {
+        Some(speed) => countdown::run(&session, selection.logical, speed, &rx).await,
+        None => false,
+    };
+    let began = if stopped {
+        Ok(false)
+    } else {
+        recorder.begin().map(|()| true)
+    };
+    if !matches!(began, Ok(true)) {
+        // Stopped during the countdown, or it couldn't start: nothing was recorded.
+        recorder.cancel().await;
+        drop(outline);
+        ui.set_recording(None);
+        if shown {
+            ui.window.present();
+            if began.is_ok() {
+                ui.toasts.add_toast(adw::Toast::new("Recording cancelled"));
+            }
+        }
+        return began.map(|_| ()).map_err(|e| e.to_string());
+    }
     let result = recorder.run(rx).await;
     drop(outline);
     ui.set_recording(None);

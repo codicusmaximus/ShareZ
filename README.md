@@ -70,6 +70,11 @@ GNOME's stop button in the top bar, also stops and keeps the recording. **Discar
 recording away. A thin red outline marks the region while it records; it stays out of the video
 and lets clicks through.
 
+Turn on **Countdown** to have a large 3, 2, 1 appear in the middle of the region first. Recording
+starts the moment the 1 disappears, so the countdown is never in the video. Its **Speed** goes
+from 0.25× to 2× (1× is one number a second), and stopping during the countdown cancels the
+recording.
+
 Choose **Desktop Audio** (what you hear), **Microphone**, or both under *Recording Audio*. With
 both, they are mixed into one track, and a limiter turns loud moments down so the mix never clips.
 If your voice is distorted before it reaches ShareZ, turn the input volume down in your sound
