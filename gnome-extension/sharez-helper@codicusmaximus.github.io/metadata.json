@@ -1,7 +1,7 @@
 {
   "uuid": "sharez-helper@codicusmaximus.github.io",
   "name": "ShareZ Helper",
-  "description": "Shows ShareZ in the top bar while it runs, and tells ShareZ where windows are and how they are stacked so region capture can snap to them. GNOME does not give either to normal apps.",
+  "description": "Shows ShareZ in the top bar while it runs, and tells ShareZ where windows are and how they are stacked so region capture can snap to them, and captures a clicked window even when others cover it. GNOME does not give either to normal apps.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/codicusmaximus/ShareZ"
 }

@@ -19,6 +19,7 @@ server, while **how windows are found** depends on the desktop.
 | Freeze frame | Portal Screenshot | Portal Screenshot | Root `GetImage` |
 | Window rectangles | ShareZ Helper extension, else GNOME Shell a11y tree | KWin script | EWMH |
 | Elements inside windows | AT-SPI | AT-SPI | AT-SPI |
+| A clicked window on its own | ShareZ Helper extension | KWin `ScreenShot2.CaptureWindow` | Composite window pixmap |
 | Recording | Portal ScreenCast + PipeWire | Same | `ximagesrc` |
 
 Backends are plain enums chosen once from the `Session` (`Backend::for_session`,
@@ -78,6 +79,19 @@ Windows are listed topmost first. Elements come from AT-SPI, with two wrinkles:
 The ShareZ Helper GNOME extension exists because GNOME Shell's accessibility tree is not in
 stacking order and `org.gnome.Shell.Introspect` is denied to normal apps. It exposes one D-Bus
 method, `GetWindows`, returning the windows on the active workspace from Mutter, topmost first.
+
+### Clicked windows
+
+A click (or Enter) on a highlighted window or element captures that window's own pixels, so other
+windows in front of it don't show; a dragged region keeps what was on screen.
+`sharez_windows::capture` asks the compositor for the window drawn off screen: the helper extension's
+`CaptureWindow` paints the window actor to a PNG as GNOME's screenshot UI does, KWin's
+`ScreenShot2.CaptureWindow` writes raw pixels to a pipe (only for apps whose desktop file lists
+`X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2`), and on X11 the Composite extension
+names the frame window's pixmap when a compositing manager is running. The selection, in logical
+coordinates, is cropped from that image at the window's own scale. The overlay stays open until
+the window arrives, so the clipboard is still set from a focused window, and if the compositor
+can't help ShareZ falls back to the frozen frame.
 
 ## Recording
 

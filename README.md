@@ -53,7 +53,7 @@ Capture works like ShareX's region capture:
 | Drag | A region, with a magnified pixel grid around the cursor |
 | Shift while dragging | A square region |
 | Ctrl while dragging | Move the region instead of resizing it |
-| Click without dragging | The highlighted window, or the button, panel or field inside it |
+| Click without dragging | The highlighted window, or the button, panel or field inside it, even where other windows cover it |
 | Scroll | Zoom the magnifier in or out |
 | Space | The whole screen |
 | Esc or right-click | Cancel (right-click during a drag only cancels the drag) |
@@ -90,8 +90,8 @@ sudo dnf install pipewire-gstreamer gstreamer1-plugins-good gstreamer1-plugins-b
 GNOME doesn't let normal apps see which window is on top. Without help ShareZ guesses, and can
 highlight a window that is behind another one, and has nowhere for a tray icon. The small ShareZ
 Helper shell extension in [`gnome-extension/`](gnome-extension/) tells it the real stacking order
-and exact window edges, places the outline around a region being recorded, and shows ShareZ's
-top-bar icon. `./install.sh` installs it for you, or copy it yourself (again after updating
+and exact window edges, captures a clicked window even where others cover it, places the outline
+around a region being recorded, and shows ShareZ's top-bar icon. `./install.sh` installs it for you, or copy it yourself (again after updating
 ShareZ):
 
 ```sh
@@ -100,7 +100,10 @@ cp -r gnome-extension/sharez-helper@codicusmaximus.github.io ~/.local/share/gnom
 gnome-extensions enable sharez-helper@codicusmaximus.github.io
 ```
 
-KDE Plasma and X11 need nothing extra.
+KDE Plasma and X11 need nothing extra. On KDE, a clicked window is captured on its own only when
+ShareZ runs from its installed launcher entry (`./install.sh`), because KWin checks the entry
+before it allows that; on X11 it needs a compositor. Otherwise ShareZ takes the region as it was
+on screen.
 
 ## Troubleshooting
 

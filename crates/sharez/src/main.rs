@@ -750,12 +750,17 @@ async fn select_region(ui: &Ui, copy: bool) -> Result<Option<Picked>, String> {
         frame: frame.clone(),
         targets,
         elements,
+        // A recording films the screen, so it shows whatever covers the window anyway.
+        window_pixels: copy,
     };
     let (tx, rx) = async_channel::bounded(1);
     overlay::show(Some(ui.app.upcast_ref()), snapshot, move |selection| {
-        let picked = selection.map(|selection| Picked {
+        let picked = selection.map(|mut selection| Picked {
+            image: copy.then(|| match selection.window_image.take() {
+                Some(image) => Ok(output::copy_frame(image)),
+                None => output::copy_image(&frame, selection.pixels),
+            }),
             selection,
-            image: copy.then(|| output::copy_image(&frame, selection.pixels)),
         });
         let _ = tx.try_send(picked);
     });

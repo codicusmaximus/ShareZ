@@ -85,6 +85,11 @@ pub fn copy_image(frame: &Frame, region: PixelRect) -> Result<Frame, String> {
     let image = frame
         .crop(region)
         .ok_or("The selected region is outside the screen.")?;
+    Ok(copy_frame(image))
+}
+
+/// Puts an image on the clipboard, with the same caveat, and hands it back.
+pub fn copy_frame(image: Frame) -> Frame {
     let texture = gdk::MemoryTexture::new(
         image.width as i32,
         image.height as i32,
@@ -95,7 +100,7 @@ pub fn copy_image(frame: &Frame, region: PixelRect) -> Result<Frame, String> {
     if let Some(display) = gdk::Display::default() {
         display.clipboard().set_texture(&texture);
     }
-    Ok(image)
+    image
 }
 
 /// Saves a screenshot as PNG under Pictures/ShareZ.

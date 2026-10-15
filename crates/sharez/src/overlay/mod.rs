@@ -11,7 +11,7 @@ use std::{
 
 use gtk::{gdk, glib, prelude::*};
 use sharez_core::{Frame, Mapping, PixelRect, Rect};
-use sharez_windows::{Elements, Target, WindowKind};
+use sharez_windows::{Elements, Target, Window, WindowKind};
 
 use selector::{Key, Outcome};
 use view::View;
@@ -26,10 +26,12 @@ pub struct Snapshot {
     /// Windows topmost first, in logical screen coordinates.
     pub targets: Vec<Target>,
     pub elements: Option<Elements>,
+    /// Take a picked window's own pixels, so windows in front of it don't show.
+    pub window_pixels: bool,
 }
 
 /// The region the user chose.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Selection {
     /// In the frozen frame's buffer pixels.
     pub pixels: PixelRect,
@@ -37,6 +39,10 @@ pub struct Selection {
     pub logical: Rect,
     /// The whole screen the overlay covered, logical.
     pub screen: Rect,
+    /// When a window (or something in it) was picked and `window_pixels` asked for it: the
+    /// window's own pixels under the selection, without whatever covered it. `None` if the
+    /// desktop couldn't give them.
+    pub window_image: Option<Frame>,
 }
 
 type Done = Box<dyn FnOnce(Option<Selection>)>;
@@ -52,6 +58,7 @@ pub fn show(
         frame,
         targets,
         elements,
+        window_pixels,
     } = snapshot;
     let texture = gdk::MemoryTexture::new(
         frame.width as i32,
@@ -68,16 +75,19 @@ pub fn show(
         .build();
     window.set_application(app);
 
+    let snapper = Rc::new(Snapper {
+        targets,
+        elements,
+        element: Cell::new(None),
+        hovered: Cell::new(None),
+        pressed: Cell::new(None),
+        busy: Cell::new(false),
+        pointer: Cell::new((0.0, 0.0)),
+    });
     let done: Rc<RefCell<Option<Done>>> = Rc::new(RefCell::new(Some(Box::new(done))));
-    let finish = {
+    let close = {
         let window = window.clone();
-        let view = view.clone();
-        move |outcome: Outcome| {
-            let result = match outcome {
-                Outcome::Capture(pixels) => Some(selection(&view, pixels)),
-                Outcome::Cancel => None,
-                Outcome::Nothing | Outcome::Redraw => return,
-            };
+        move |result: Option<Selection>| {
             // While the overlay still has focus, so `done` can set the clipboard on Wayland.
             if let Some(done) = done.borrow_mut().take() {
                 done(result);
@@ -85,16 +95,47 @@ pub fn show(
             window.destroy();
         }
     };
+    let finish = {
+        let view = view.clone();
+        let snapper = Rc::clone(&snapper);
+        let closing = Cell::new(false);
+        move |outcome: Outcome| {
+            if closing.get() {
+                return;
+            }
+            let (pixels, picked) = match outcome {
+                Outcome::Capture(pixels) => (pixels, None),
+                Outcome::Pick(pixels) => (pixels, snapper.picked().filter(|_| window_pixels)),
+                Outcome::Cancel => return close(None),
+                Outcome::Nothing | Outcome::Redraw => return,
+            };
+            let selection = selection(&view, pixels);
+            let Some(picked) = picked else {
+                return close(Some(selection));
+            };
+            // Asking the desktop for the window takes a moment; the overlay stays up meanwhile so
+            // the clipboard can still be set.
+            closing.set(true);
+            view.set_cursor_from_name(Some("progress"));
+            let close = close.clone();
+            glib::spawn_future_local(async move {
+                let window_image = match sharez_windows::capture(&picked).await {
+                    Ok(shot) => shot.crop(selection.logical),
+                    Err(e) => {
+                        eprintln!("Using the screenshot as it was, not the window alone: {e}");
+                        None
+                    }
+                };
+                close(Some(Selection {
+                    window_image,
+                    ..selection
+                }));
+            });
+        }
+    };
     let finish: Rc<dyn Fn(Outcome)> = Rc::new(finish);
-    let snapper = Rc::new(Snapper {
-        targets,
-        elements,
-        element: Cell::new(None),
-        busy: Cell::new(false),
-        pointer: Cell::new((0.0, 0.0)),
-    });
     add_pointer_controllers(&view, &snapper, &finish);
-    add_key_controller(&window, &view, &finish);
+    add_key_controller(&window, &view, &snapper, &finish);
 
     window.fullscreen();
     window.present();
@@ -112,6 +153,7 @@ fn selection(view: &View, pixels: PixelRect) -> Selection {
             f64::from(pixels.height) / sy,
         ),
         screen: Rect::new(0.0, 0.0, f64::from(view.width()), f64::from(view.height())),
+        window_image: None,
     }
 }
 
@@ -138,7 +180,10 @@ fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn F
     drag.connect_drag_begin(glib::clone!(
         #[weak]
         view,
+        #[strong]
+        snapper,
         move |_, x, y| {
+            snapper.press();
             let (bx, by) = view.to_buffer(x, y);
             view.update(|s| s.press(bx, by));
         }
@@ -190,7 +235,12 @@ fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn F
     view.add_controller(scroll);
 }
 
-fn add_key_controller(window: &gtk::Window, view: &View, finish: &Rc<dyn Fn(Outcome)>) {
+fn add_key_controller(
+    window: &gtk::Window,
+    view: &View,
+    snapper: &Rc<Snapper>,
+    finish: &Rc<dyn Fn(Outcome)>,
+) {
     let opened = Instant::now();
     let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed(glib::clone!(
@@ -198,6 +248,8 @@ fn add_key_controller(window: &gtk::Window, view: &View, finish: &Rc<dyn Fn(Outc
         view,
         #[strong]
         finish,
+        #[strong]
+        snapper,
         #[upgrade_or]
         glib::Propagation::Proceed,
         move |_, key, _, _| {
@@ -206,7 +258,10 @@ fn add_key_controller(window: &gtk::Window, view: &View, finish: &Rc<dyn Fn(Outc
             }
             let key = match key {
                 gdk::Key::Escape => Key::Escape,
-                gdk::Key::Return | gdk::Key::KP_Enter => Key::Enter,
+                gdk::Key::Return | gdk::Key::KP_Enter => {
+                    snapper.press();
+                    Key::Enter
+                }
                 gdk::Key::space => Key::Space,
                 _ => return glib::Propagation::Proceed,
             };
@@ -224,6 +279,10 @@ struct Snapper {
     elements: Option<Elements>,
     /// The element last found, and the target it belongs to.
     element: Cell<Option<(usize, Rect)>>,
+    /// The target the highlight belongs to.
+    hovered: Cell<Option<usize>>,
+    /// `hovered` when the mouse button or Enter went down, which a pick takes.
+    pressed: Cell<Option<usize>>,
     busy: Cell<bool>,
     pointer: Cell<(f64, f64)>,
 }
@@ -235,7 +294,21 @@ impl Snapper {
             .position(|t| t.window.kind != WindowKind::Desktop && t.visible.contains(x, y))
     }
 
-    fn set_hover(view: &View, r: Option<Rect>) {
+    fn press(&self) {
+        self.pressed.set(self.hovered.get());
+    }
+
+    /// The window a pick took.
+    fn picked(&self) -> Option<Window> {
+        self.pressed
+            .get()
+            .and_then(|t| self.targets.get(t))
+            .map(|t| t.window.clone())
+    }
+
+    /// Highlights `r`, part of target `t`.
+    fn set_hover(&self, view: &View, t: Option<usize>, r: Option<Rect>) {
+        self.hovered.set(t);
         let pixels = r.and_then(|r| {
             let (w, h) = (f64::from(view.width()), f64::from(view.height()));
             let (sx, sy) = view.scale();
@@ -257,11 +330,11 @@ impl Snapper {
             (Some(t), Some((et, r))) if t == et && r.contains(x, y) => {}
             (Some(t), _) => {
                 self.element.set(None);
-                Self::set_hover(view, Some(self.targets[t].visible));
+                self.set_hover(view, Some(t), Some(self.targets[t].visible));
             }
             (None, _) => {
                 self.element.set(None);
-                Self::set_hover(view, None);
+                self.set_hover(view, None, None);
             }
         }
         if target.is_some() && self.elements.is_some() && !self.busy.replace(true) {
@@ -289,8 +362,9 @@ impl Snapper {
             }
             if let Some(&inner) = path.last() {
                 self.element.set(Some((t, inner)));
-                Self::set_hover(
+                self.set_hover(
                     view,
+                    Some(t),
                     inner.intersection(&self.targets[t].visible).or(Some(inner)),
                 );
             }

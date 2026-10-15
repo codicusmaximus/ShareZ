@@ -14,12 +14,14 @@ mod elements;
 mod ewmh;
 mod gnome;
 mod kwin;
+mod shot;
 
 pub use a11y::ensure_enabled as ensure_accessibility;
 pub use elements::{Elements, Target};
 pub use gnome::{helper_features, helper_set_recording};
 use serde::Serialize;
 use sharez_core::{Desktop, DisplayServer, Rect, Session};
+pub use shot::{Shot, capture};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -33,6 +35,10 @@ pub enum Error {
     X11(String),
     #[error("I/O: {0}")]
     Io(#[from] std::io::Error),
+    #[error("decoding the window image: {0}")]
+    Png(#[from] png::DecodingError),
+    #[error("this desktop can't capture single windows")]
+    Unsupported,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -47,6 +53,17 @@ pub enum WindowKind {
     /// The desktop background window.
     Desktop,
     Other,
+}
+
+/// How the desktop names a window, to capture it on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum Handle {
+    /// Mutter's stable sequence number, through the helper extension.
+    Gnome(u32),
+    /// KWin's internal id, a UUID.
+    Kwin(String),
+    /// The client window.
+    X11(u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -67,6 +84,8 @@ pub struct Window {
     /// snapping (GNOME reports GTK 4 windows about 25 px larger on each side).
     pub shadow_included: bool,
     pub minimized: bool,
+    /// For capturing the window's own pixels, if the source can.
+    pub handle: Option<Handle>,
 }
 
 /// How windows are listed in this session.
