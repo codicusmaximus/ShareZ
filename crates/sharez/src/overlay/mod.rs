@@ -28,13 +28,24 @@ pub struct Snapshot {
     pub elements: Option<Elements>,
 }
 
-type Done = Box<dyn FnOnce(Option<PixelRect>)>;
+/// The region the user chose.
+#[derive(Debug, Clone, Copy)]
+pub struct Selection {
+    /// In the frozen frame's buffer pixels.
+    pub pixels: PixelRect,
+    /// In logical screen coordinates.
+    pub logical: Rect,
+    /// The whole screen the overlay covered, logical.
+    pub screen: Rect,
+}
 
-/// Opens the overlay. `done` gets the chosen region in buffer pixels, or `None` if cancelled.
+type Done = Box<dyn FnOnce(Option<Selection>)>;
+
+/// Opens the overlay. `done` gets the chosen region, or `None` if cancelled.
 pub fn show(
     app: Option<&gtk::Application>,
     snapshot: Snapshot,
-    done: impl FnOnce(Option<PixelRect>) + 'static,
+    done: impl FnOnce(Option<Selection>) + 'static,
 ) {
     let Snapshot {
         frame,
@@ -59,9 +70,10 @@ pub fn show(
     let done: Rc<RefCell<Option<Done>>> = Rc::new(RefCell::new(Some(Box::new(done))));
     let finish = {
         let window = window.clone();
+        let view = view.clone();
         move |outcome: Outcome| {
             let result = match outcome {
-                Outcome::Capture(r) => Some(r),
+                Outcome::Capture(pixels) => Some(selection(&view, pixels)),
                 Outcome::Cancel => None,
                 Outcome::Nothing | Outcome::Redraw => return,
             };
@@ -85,6 +97,20 @@ pub fn show(
     window.fullscreen();
     window.present();
     view.grab_focus();
+}
+
+fn selection(view: &View, pixels: PixelRect) -> Selection {
+    let (sx, sy) = view.scale();
+    Selection {
+        pixels,
+        logical: Rect::new(
+            f64::from(pixels.x) / sx,
+            f64::from(pixels.y) / sy,
+            f64::from(pixels.width) / sx,
+            f64::from(pixels.height) / sy,
+        ),
+        screen: Rect::new(0.0, 0.0, f64::from(view.width()), f64::from(view.height())),
+    }
 }
 
 fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn Fn(Outcome)>) {

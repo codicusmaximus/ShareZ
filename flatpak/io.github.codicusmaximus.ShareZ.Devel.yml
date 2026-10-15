@@ -21,6 +21,8 @@ finish-args:
   - --talk-name=org.kde.KWin
   # GNOME: window positions and elements inside windows come from the accessibility tree.
   - --talk-name=org.a11y.Bus
+  # GNOME: window stacking from the ShareZ Helper shell extension.
+  - --talk-name=io.github.codicusmaximus.ShareZ.ShellHelper
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   build-args:

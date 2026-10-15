@@ -9,6 +9,7 @@ server, while **how windows are found** depends on the desktop.
 | `sharez-core` | Geometry (`Rect`, `PixelRect`, `Mapping`), the RGBA `Frame` and session detection. No platform dependencies. |
 | `sharez-capture` | Freezing the screen: the screenshot portal on Wayland, the root window on X11. |
 | `sharez-windows` | Listing windows (a KWin script on KDE, the ShareZ Helper extension or GNOME Shell's accessibility tree on GNOME, EWMH on X11) and finding elements inside them through AT-SPI. |
+| `sharez-record` | Region recording: the screencast portal or X11 root window into a GStreamer pipeline that crops, encodes and mixes audio. |
 | `sharez` | The GTK 4 / libadwaita application. |
 
 ## Backends
@@ -18,7 +19,7 @@ server, while **how windows are found** depends on the desktop.
 | Freeze frame | Portal Screenshot | Portal Screenshot | Root `GetImage` |
 | Window rectangles | ShareZ Helper extension, else GNOME Shell a11y tree | KWin script | EWMH |
 | Elements inside windows | AT-SPI | AT-SPI | AT-SPI |
-| Recording | Portal ScreenCast + PipeWire *(milestone 4)* | Same | `ximagesrc` *(milestone 4)* |
+| Recording | Portal ScreenCast + PipeWire | Same | `ximagesrc` |
 
 Backends are plain enums chosen once from the `Session` (`Backend::for_session`,
 `Source::for_session`), not trait objects. There are only a handful of them, and an enum keeps
@@ -78,10 +79,38 @@ The ShareZ Helper GNOME extension exists because GNOME Shell's accessibility tre
 stacking order and `org.gnome.Shell.Introspect` is denied to normal apps. It exposes one D-Bus
 method, `GetWindows`, returning the windows on the active workspace from Mutter, topmost first.
 
+## Recording
+
+`sharez-record` builds one GStreamer pipeline in-process with `gstreamer-rs`:
+
+```
+pipewiresrc | ximagesrc → videocrop → videorate → I420 → H.264 or VP8 ┐
+pulsesrc (@DEFAULT_MONITOR@) ┐                                         ├→ mp4mux | webmmux → file
+pulsesrc (default input)     ┴→ audiomixer → AAC or Opus ──────────────┘
+```
+
+- **Region.** The overlay hands back the region in logical coordinates. On Wayland the crop is
+  set when the stream's caps arrive, from the buffer size and the shared monitor's logical
+  rectangle, because at fractional scales the buffers are larger than the logical size (the KDE
+  spike run). On X11 `ximagesrc` reads just the region. Sizes are trimmed to even numbers.
+- **Encoders** are picked at runtime: `x264enc`, then `openh264enc` (what a stock Fedora has),
+  then `vp8enc`. H.264 goes in MP4 with AAC when an AAC encoder is installed, Opus otherwise; VP8
+  goes in WebM with Opus. Bitrate-controlled encoders get about 0.12 bits per pixel per frame.
+- **Audio** comes through PipeWire's PulseAudio interface. Desktop audio and the microphone are
+  mixed into one stereo track, since one track is what players and sharing sites expect.
+- **Portal session.** The ScreenCast restore token is saved in
+  `~/.local/state/sharez/screencast-restore-token`, so the share dialog appears only once.
+- **Stopping** sends EOS so the muxer writes its index; a recording that doesn't finish within
+  10 seconds is reported as possibly unplayable.
+
+While recording, the main window minimises itself and shows a timer with Stop and Discard, and a
+notification offers Stop.
+
 ## Not built yet
 
 - Multi-monitor overlay: the frozen frame covers all monitors, but the overlay is one full-screen
   window and assumes the screen starts at 0,0. It will become one overlay per monitor using each
   monitor's `Mapping`.
 - Moving the cursor with arrow keys, as ShareX does: Wayland doesn't let apps warp the pointer.
-- Recording: milestone 4, through `gstreamer-rs` in-process.
+- Recording extras: a border around the region while recording, a global hotkey to stop, a
+  microphone level meter and gain, and a start countdown.
