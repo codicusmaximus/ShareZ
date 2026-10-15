@@ -1,12 +1,13 @@
 //! Region recording: the screen through the screencast portal (Wayland) or the root window (X11),
 //! cropped to a region and encoded with GStreamer, with desktop audio and the microphone mixed into
-//! one track.
+//! one track that is limited so it never clips.
 //!
 //! Recording follows what the feasibility spike proved on GNOME and KDE: portal `ScreenCast` →
 //! PipeWire → crop → encode. The share dialog appears on the first recording only; its restore
 //! token is saved so later recordings start straight away.
 
 mod encoders;
+mod limiter;
 mod pipeline;
 mod recorder;
 mod screencast;

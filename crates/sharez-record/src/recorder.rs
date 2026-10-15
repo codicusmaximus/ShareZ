@@ -1,6 +1,11 @@
 //! Running a recording: start, wait for the user to stop, finish the file.
 
-use std::{os::fd::AsRawFd, path::PathBuf, time::Duration};
+use std::{
+    os::fd::AsRawFd,
+    path::PathBuf,
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
 use futures_util::{
     StreamExt,
@@ -11,6 +16,7 @@ use sharez_core::{DisplayServer, Mapping, PixelRect, Rect, Session};
 
 use crate::{
     Audio, Error, Format, Options, Result,
+    limiter::Limiter,
     pipeline::{self, AudioIn, VideoIn},
     screencast,
 };
@@ -18,6 +24,8 @@ use crate::{
 /// How long finishing the file may take after Stop. Muxers write their index at the end, and
 /// `faststart` MP4 also rewrites the file once.
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the video source gets to deliver EOS on its own before its branch is ended for it.
+const VIDEO_EOS_GRACE: Duration = Duration::from_secs(2);
 
 /// What to do with the recording when it ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +162,12 @@ impl Recorder {
                 .ok_or_else(|| Error::Gst(format!("no {name} in the pipeline")))
         };
         element("sink")?.set_property("location", options.path.to_string_lossy().as_ref());
+        if let Some(pad) = pipeline
+            .by_name(pipeline::LIMITER)
+            .and_then(|e| e.static_pad("src"))
+        {
+            limit(&pad);
+        }
         let encoder = element("venc")?;
         let fps = options.fps;
         match crop {
@@ -218,27 +232,92 @@ impl Recorder {
             .bus()
             .ok_or_else(|| Error::Gst("the pipeline has no bus".into()))?;
         let mut messages = bus.stream_filtered(&[gst::MessageType::Eos, gst::MessageType::Error]);
-        // An error, or EOS before Stop: a source ended (the share was revoked, say), so keep
-        // what was recorded.
         let ended = |msg: &gst::Message| match error_of(msg) {
             Some(e) => Err(e),
             None => Ok(Some(self.path.clone())),
         };
-        let how = match select(messages.next(), Box::pin(stop.recv())).await {
+        // Stopping from the desktop (GNOME's "Stop sharing" in the top bar) closes the portal
+        // session, and the video source then fails. Both mean "stop and keep the recording".
+        let share_ended: Pin<Box<dyn Future<Output = ()>>> = match &self.cast {
+            Some(cast) => Box::pin(cast.closed()),
+            None => Box::pin(std::future::pending()),
+        };
+        let user_or_share = async {
+            match select(Box::pin(stop.recv()), share_ended).await {
+                Either::Left((how, _)) => how.unwrap_or(Stop::Save),
+                Either::Right(((), _)) => Stop::Save,
+            }
+        };
+        let how = match select(messages.next(), Box::pin(user_or_share)).await {
+            Either::Left((Some(msg), _)) if is_video_error(&msg) => {
+                self.end_video();
+                Stop::Save
+            }
             Either::Left((Some(msg), _)) => return ended(&msg),
             Either::Left((None, _)) => return Err(Error::Gst("bus closed".into())),
-            Either::Right((how, _)) => how.unwrap_or(Stop::Save),
+            Either::Right((how, _)) => how,
         };
         if how == Stop::Discard {
             return Ok(None);
         }
         self.pipeline.send_event(gst::event::Eos::new());
-        match select(messages.next(), async_io::Timer::after(STOP_TIMEOUT)).await {
-            Either::Left((Some(msg), _)) => ended(&msg),
-            Either::Left((None, _)) => Err(Error::Gst("bus closed".into())),
-            Either::Right(_) => Err(Error::StopTimeout),
+        let started = Instant::now();
+        let mut ended_video = false;
+        loop {
+            // A source whose stream is gone can't deliver EOS itself; after a moment, end its
+            // branch directly so the muxer still finishes the file.
+            let wait = if ended_video {
+                STOP_TIMEOUT.saturating_sub(started.elapsed())
+            } else {
+                VIDEO_EOS_GRACE
+            };
+            match select(messages.next(), async_io::Timer::after(wait)).await {
+                Either::Left((Some(msg), _)) if is_video_error(&msg) => {
+                    self.end_video();
+                    ended_video = true;
+                }
+                Either::Left((Some(msg), _)) => return ended(&msg),
+                Either::Left((None, _)) => return Err(Error::Gst("bus closed".into())),
+                Either::Right(_) if !ended_video => {
+                    self.end_video();
+                    ended_video = true;
+                }
+                Either::Right(_) => return Err(Error::StopTimeout),
+            }
         }
     }
+
+    /// Ends the video branch below its source, for when the source can't (its stream is gone).
+    fn end_video(&self) {
+        if let Some(pad) = self
+            .pipeline
+            .by_name("crop")
+            .and_then(|crop| crop.static_pad("sink"))
+        {
+            pad.send_event(gst::event::Eos::new());
+        }
+    }
+}
+
+/// An error from the screen source: the share ended or the stream broke. What was recorded so
+/// far is still good.
+fn is_video_error(msg: &gst::Message) -> bool {
+    matches!(msg.view(), gst::MessageView::Error(_))
+        && msg.src().is_some_and(|s| s.name() == pipeline::VIDEO)
+}
+
+/// Runs the limiter on every buffer leaving `pad`.
+fn limit(pad: &gst::Pad) {
+    let limiter = std::sync::Mutex::new(Limiter::default());
+    pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+        if let Some(gst::PadProbeData::Buffer(buffer)) = &mut info.data
+            && let Ok(mut map) = buffer.make_mut().map_writable()
+            && let Ok(mut limiter) = limiter.lock()
+        {
+            limiter.process_bytes(map.as_mut_slice());
+        }
+        gst::PadProbeReturn::Ok
+    });
 }
 
 fn buffer_size(caps: &gst::CapsRef) -> Option<(u32, u32)> {
@@ -306,9 +385,10 @@ mod tests {
         }
     }
 
-    fn record_with(format: Format) {
+    /// A recorder on test sources: 320×240 video cropped to 102×80, two tones.
+    fn test_recorder(format: Format, name: &str) -> Recorder {
         let path = std::env::temp_dir().join(format!(
-            "sharez-test-{}-{}-{}.{}",
+            "sharez-test-{}-{name}-{}-{}.{}",
             std::process::id(),
             format.video_encoder().split(' ').next().unwrap(),
             format.audio_encoder().split(' ').next().unwrap(),
@@ -331,27 +411,100 @@ mod tests {
             area: Rect::new(0.0, 0.0, 160.0, 120.0),
             region: Rect::new(10.0, 10.0, 51.0, 40.0),
         };
-        let pipeline = Recorder::launch(&video, &audio, &options, format, crop).unwrap();
-        let videocrop = pipeline.by_name("crop").unwrap();
-        let recorder = Recorder {
-            pipeline,
-            path: path.clone(),
+        Recorder {
+            pipeline: Recorder::launch(&video, &audio, &options, format, crop).unwrap(),
+            path,
             cast: None,
-        };
+        }
+    }
+
+    /// Runs `recorder`, doing `meanwhile` after a second and a half and then saving.
+    fn run_for(recorder: Recorder, meanwhile: impl FnOnce()) -> Result<Option<PathBuf>> {
         let (tx, rx) = async_channel::bounded(1);
-        let saved = async_io::block_on(async {
+        async_io::block_on(async {
             let stopper = async {
-                async_io::Timer::after(Duration::from_secs(2)).await;
-                tx.send(Stop::Save).await.unwrap();
+                async_io::Timer::after(Duration::from_millis(1500)).await;
+                meanwhile();
+                async_io::Timer::after(Duration::from_millis(500)).await;
+                let _ = tx.send(Stop::Save).await;
             };
             futures_util::join!(recorder.run(rx), stopper).0
         })
-        .unwrap();
+    }
+
+    fn record_with(format: Format) {
+        let recorder = test_recorder(format, "save");
+        let path = recorder.path.clone();
+        let videocrop = recorder.pipeline.by_name("crop").unwrap();
+        let saved = run_for(recorder, || {}).unwrap();
         assert_eq!(saved.as_deref(), Some(path.as_path()));
         // 2× scale: 10,10 51×40 logical is 20,20 102×80 pixels.
         assert_eq!(videocrop.property::<i32>("left"), 20);
         assert_eq!(videocrop.property::<i32>("right"), 320 - 20 - 102);
         assert!(std::fs::metadata(&path).unwrap().len() > 1000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Stopping the share from the desktop kills the video source with an error. The recording
+    /// must still be finished and kept.
+    #[test]
+    fn share_ending_keeps_the_recording() {
+        crate::init().unwrap();
+        let format = Format::detect().unwrap();
+        let recorder = test_recorder(format, "share-ended");
+        let path = recorder.path.clone();
+        let video = recorder.pipeline.by_name(pipeline::VIDEO).unwrap();
+        let saved = run_for(recorder, move || {
+            // What pipewiresrc does when the stream goes away: stop producing, post an error.
+            video.set_locked_state(true);
+            let _ = video.set_state(gst::State::Null);
+            video
+                .post_message(
+                    gst::message::Error::builder(gst::ResourceError::Failed, "stream disconnected")
+                        .src(&video)
+                        .build(),
+                )
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(saved.as_deref(), Some(path.as_path()));
+        assert!(std::fs::metadata(&path).unwrap().len() > 1000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// The loudest sample passing `pad`, kept up to date while the pipeline runs.
+    fn loudest(pad: &gst::Pad) -> std::sync::Arc<std::sync::Mutex<f32>> {
+        let loudest = std::sync::Arc::new(std::sync::Mutex::new(0.0_f32));
+        let seen = loudest.clone();
+        pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+            if let Some(gst::PadProbeData::Buffer(buffer)) = &info.data
+                && let Ok(map) = buffer.map_readable()
+            {
+                let mut seen = seen.lock().unwrap();
+                for b in map.as_slice().as_chunks::<4>().0 {
+                    let s = f32::from_le_bytes(*b);
+                    *seen = seen.max(s.abs());
+                }
+            }
+            gst::PadProbeReturn::Ok
+        });
+        loudest
+    }
+
+    /// Two loud tones mixed go well over full scale; what gets encoded must not.
+    #[test]
+    fn mixed_audio_does_not_clip() {
+        crate::init().unwrap();
+        let format = Format::detect().unwrap();
+        let recorder = test_recorder(format, "loud");
+        let path = recorder.path.clone();
+        let element = recorder.pipeline.by_name(pipeline::LIMITER).unwrap();
+        let mixed = loudest(&element.static_pad("sink").unwrap());
+        let limited = loudest(&element.static_pad("src").unwrap());
+        run_for(recorder, || {}).unwrap();
+        let (mixed, limited) = (*mixed.lock().unwrap(), *limited.lock().unwrap());
+        assert!(mixed > 1.0, "the test tones should clip unlimited: {mixed}");
+        assert!(limited <= crate::limiter::CEILING, "limited to {limited}");
         let _ = std::fs::remove_file(path);
     }
 }
