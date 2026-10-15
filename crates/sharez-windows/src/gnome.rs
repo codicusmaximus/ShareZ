@@ -15,7 +15,7 @@ use serde::Deserialize;
 use sharez_core::Rect;
 use zbus::Connection;
 
-use crate::{Error, Result, Window, WindowKind, a11y, dbus::call};
+use crate::{Error, Handle, Result, Window, WindowKind, a11y, dbus::call};
 
 const HELPER: &str = "io.github.codicusmaximus.ShareZ.ShellHelper";
 const HELPER_PATH: &str = "/io/github/codicusmaximus/ShareZ/ShellHelper";
@@ -37,6 +37,8 @@ struct HelperWindow {
     kind: WindowKind,
     frame: [f64; 4],
     client: [f64; 4],
+    /// Missing from helpers that can't capture windows.
+    id: Option<u32>,
 }
 
 /// Asks the helper extension to move a window of ours to `rect` and keep it above the others.
@@ -107,6 +109,7 @@ async fn from_extension() -> Result<Vec<Window>> {
             client: Some(rect(w.client)),
             shadow_included: false,
             minimized: false,
+            handle: w.id.map(Handle::Gnome),
         })
         .collect())
 }
@@ -150,6 +153,7 @@ async fn from_shell_tree() -> Result<Vec<Window>> {
                         client: None,
                         shadow_included: name == "Wayland window",
                         minimized: false,
+                        handle: None,
                     });
                 }
                 // A window actor's subtree is the window's own content; nothing more to find.

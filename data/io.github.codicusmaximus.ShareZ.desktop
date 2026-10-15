@@ -9,6 +9,8 @@ Categories=Utility;Graphics;
 Keywords=screenshot;screen;capture;record;screencast;
 StartupNotify=true
 X-GNOME-UsesNotifications=true
+# KWin only lets apps that ask here capture a single window.
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 Actions=capture;record;
 
 [Desktop Action capture]

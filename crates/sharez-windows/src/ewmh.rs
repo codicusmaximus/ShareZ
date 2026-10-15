@@ -7,7 +7,7 @@ use x11rb::{
     rust_connection::RustConnection,
 };
 
-use crate::{Error, Result, Window, WindowKind};
+use crate::{Error, Handle, Result, Window, WindowKind};
 
 fn x11_err(e: impl std::fmt::Display) -> Error {
     Error::X11(e.to_string())
@@ -158,6 +158,7 @@ pub fn windows() -> Result<Vec<Window>> {
             client: Some(client),
             shadow_included: false,
             minimized: prop32(&conn, w, atoms.wm_state, AtomEnum::ATOM).contains(&atoms.hidden),
+            handle: Some(Handle::X11(w)),
         });
     }
     Ok(out)

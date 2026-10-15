@@ -18,7 +18,10 @@ const MAGNIFIER_PIXELS_RANGE: (u32, u32) = (3, 35);
 pub enum Outcome {
     Nothing,
     Redraw,
+    /// A region the user drew, or the whole screen.
     Capture(PixelRect),
+    /// The hovered window or element, taken with a click or Enter.
+    Pick(PixelRect),
     Cancel,
 }
 
@@ -169,7 +172,7 @@ impl Selector {
         match selection {
             Some(r) if r.width >= MIN_SIZE && r.height >= MIN_SIZE => Outcome::Capture(r),
             _ => match drag.hover {
-                Some(h) => Outcome::Capture(h),
+                Some(h) => Outcome::Pick(h),
                 None => Outcome::Redraw,
             },
         }
@@ -197,7 +200,7 @@ impl Selector {
     pub fn key(&mut self, key: Key) -> Outcome {
         match key {
             Key::Escape => Outcome::Cancel,
-            Key::Enter => self.hover.map_or(Outcome::Nothing, Outcome::Capture),
+            Key::Enter => self.hover.map_or(Outcome::Nothing, Outcome::Pick),
             Key::Space => Outcome::Capture(self.bounds()),
         }
     }
@@ -257,7 +260,7 @@ mod tests {
         s.press(20.0, 20.0);
         s.motion(22.0, 21.0, false); // Under the drag threshold.
         assert_eq!(s.hover(), Some(rect(5, 5, 50, 40)));
-        assert_eq!(s.release(22.0, 21.0), Outcome::Capture(rect(5, 5, 50, 40)));
+        assert_eq!(s.release(22.0, 21.0), Outcome::Pick(rect(5, 5, 50, 40)));
     }
 
     #[test]
@@ -270,7 +273,7 @@ mod tests {
         s.press(20.0, 20.0);
         s.motion(23.0, 23.0, false);
         assert_eq!(s.hover(), None, "hover hides while drawing");
-        assert_eq!(s.release(23.0, 23.0), Outcome::Capture(rect(0, 0, 10, 10)));
+        assert_eq!(s.release(23.0, 23.0), Outcome::Pick(rect(0, 0, 10, 10)));
     }
 
     #[test]
@@ -299,6 +302,8 @@ mod tests {
     fn keys_and_scroll() {
         let mut s = Selector::new(80, 60);
         assert_eq!(s.key(Key::Enter), Outcome::Nothing);
+        s.set_hover(Some(rect(1, 2, 3, 4)));
+        assert_eq!(s.key(Key::Enter), Outcome::Pick(rect(1, 2, 3, 4)));
         assert_eq!(s.key(Key::Space), Outcome::Capture(rect(0, 0, 80, 60)));
         assert_eq!(s.key(Key::Escape), Outcome::Cancel);
         s.scroll(true);

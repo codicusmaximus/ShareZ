@@ -8,7 +8,7 @@ use serde::Deserialize;
 use sharez_core::Rect;
 use zbus::Connection;
 
-use crate::{Error, Result, Window, WindowKind, dbus::call};
+use crate::{Error, Handle, Result, Window, WindowKind, dbus::call};
 
 const BUS_NAME: &str = "io.github.codicusmaximus.ShareZ.KWinWindows";
 const PLUGIN: &str = "sharez-window-list";
@@ -21,6 +21,7 @@ for (let i = 0; i < list.length; i++) {
     const g = w.frameGeometry, c = w.clientGeometry;
     out.push({
         title: String(w.caption),
+        id: String(w.internalId),
         app_id: String(w.resourceClass),
         pid: w.pid,
         frame: [g.x, g.y, g.width, g.height],
@@ -38,6 +39,7 @@ struct ScriptWindow {
     title: String,
     app_id: String,
     pid: i64,
+    id: String,
     frame: [f64; 4],
     client: Option<[f64; 4]>,
     normal: bool,
@@ -180,6 +182,7 @@ impl From<ScriptWindow> for Window {
             client: w.client.map(rect),
             shadow_included: false,
             minimized: w.minimized,
+            handle: Some(w.id).filter(|id| !id.is_empty()).map(Handle::Kwin),
         }
     }
 }
@@ -192,12 +195,19 @@ mod tests {
     fn parses_script_output() {
         // Konsole from the KDE spike run: a 27 px server-side title bar at scale 1.35.
         let json = r#"[{"title":"feasibility : bash — Konsole","app_id":"org.kde.konsole","pid":63229,
+            "id":"{0b8f5a52-3a4c-4f0e-9f57-0c9a3c7a1d11}",
             "frame":[380,244,911.11,579.26],"client":[380,271.41,911.11,551.85],
             "normal":true,"dialog":false,"dock":false,"desktop":false,"minimized":false}]"#;
         let list: Vec<ScriptWindow> = serde_json::from_str(json).unwrap();
         let w = Window::from(list.into_iter().next().unwrap());
         assert_eq!(w.kind, WindowKind::Normal);
         assert_eq!(w.pid, Some(63229));
+        assert_eq!(
+            w.handle,
+            Some(Handle::Kwin(
+                "{0b8f5a52-3a4c-4f0e-9f57-0c9a3c7a1d11}".into()
+            ))
+        );
         assert!((w.client.unwrap().y - w.frame.y - 27.41).abs() < 1e-9);
     }
 }

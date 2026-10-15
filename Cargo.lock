@@ -1455,6 +1455,7 @@ dependencies = [
  "async-io",
  "futures-lite",
  "futures-util",
+ "png",
  "serde",
  "serde_json",
  "sharez-core",

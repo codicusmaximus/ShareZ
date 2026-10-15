@@ -1,11 +1,12 @@
 // ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first,
-// places ShareZ's recording outline with PlaceWindow, and shows ShareZ's icon in the top bar while
-// ShareZ runs. Mutter gives normal Wayland clients neither window positions nor stacking order,
+// renders one of them on its own with CaptureWindow, places ShareZ's recording outline with
+// PlaceWindow, and shows ShareZ's icon in the top bar while ShareZ runs. Mutter gives normal Wayland clients neither window positions nor stacking order,
 // nor a way to position their own windows, and GNOME has no tray for them.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -28,6 +29,11 @@ const IFACE = `
     <method name="GetWindows">
       <arg type="s" direction="out" name="json"/>
     </method>
+    <method name="CaptureWindow">
+      <arg type="u" direction="in" name="id"/>
+      <arg type="ay" direction="out" name="png"/>
+      <arg type="(iiii)" direction="out" name="area"/>
+    </method>
     <method name="PlaceWindow">
       <arg type="s" direction="in" name="title"/>
       <arg type="i" direction="in" name="x"/>
@@ -40,6 +46,8 @@ const IFACE = `
 </node>`;
 
 const rect = r => [r.x, r.y, r.width, r.height];
+
+Gio._promisify(Shell.Screenshot, 'composite_to_stream');
 
 function kind(w) {
     switch (w.get_window_type()) {
@@ -82,7 +90,7 @@ export default class ShareZHelperExtension extends Extension {
     }
 
     Features() {
-        return ['windows', 'place', 'indicator'];
+        return ['windows', 'place', 'indicator', 'capture-window'];
     }
 
     SetRecording(recording) {
@@ -144,8 +152,33 @@ export default class ShareZHelperExtension extends Extension {
                 kind: kind(w),
                 frame: rect(frame),
                 client: rect(w.frame_rect_to_client_rect(frame)),
+                id: w.get_stable_sequence(),
             };
         }));
+    }
+
+    // Renders one window on its own, as GNOME's screenshot UI does in window mode, so windows in
+    // front of it don't show. Answers a PNG and the screen area it covers (the window's buffer,
+    // which can be larger than its frame).
+    async CaptureWindowAsync([id], invocation) {
+        try {
+            const actor = global.get_window_actors()
+                .find(a => a.meta_window.get_stable_sequence() === id);
+            if (!actor)
+                throw new Error(`No window ${id}`);
+            const texture = actor.paint_to_content(null)?.get_texture();
+            if (!texture)
+                throw new Error('The window has nothing to show');
+            const stream = Gio.MemoryOutputStream.new_resizable();
+            await Shell.Screenshot.composite_to_stream(texture, 0, 0, -1, -1, 1,
+                null, 0, 0, 1, stream);
+            stream.close(null);
+            const png = stream.steal_as_bytes().toArray();
+            const area = rect(actor.meta_window.get_buffer_rect());
+            invocation.return_value(new GLib.Variant('(ay(iiii))', [png, area]));
+        } catch (e) {
+            invocation.return_dbus_error(`${BUS_NAME}.Error.Failed`, e.message);
+        }
     }
 
     // Moves the named window (one of ShareZ's own) to an exact spot, keeps it above other windows

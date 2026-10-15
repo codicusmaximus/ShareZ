@@ -21,6 +21,23 @@ where
     B: Serialize + DynamicType,
     R: DeserializeOwned + zbus::zvariant::Type,
 {
+    call_within(TIMEOUT, conn, dest, path, iface, method, body).await
+}
+
+/// [`call`] for calls that take longer, such as rendering a window.
+pub async fn call_within<B, R>(
+    timeout: Duration,
+    conn: &Connection,
+    dest: &str,
+    path: &str,
+    iface: &str,
+    method: &str,
+    body: &B,
+) -> Result<R>
+where
+    B: Serialize + DynamicType,
+    R: DeserializeOwned + zbus::zvariant::Type,
+{
     let call = async {
         let reply = conn
             .call_method(Some(dest), path, Some(iface), method, body)
@@ -28,7 +45,7 @@ where
         Ok(reply.body().deserialize::<R>()?)
     };
     let timeout = async {
-        async_io::Timer::after(TIMEOUT).await;
+        async_io::Timer::after(timeout).await;
         Err(Error::Timeout("a D-Bus peer"))
     };
     call.or(timeout).await

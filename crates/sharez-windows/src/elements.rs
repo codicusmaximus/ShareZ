@@ -259,6 +259,7 @@ mod tests {
             client,
             shadow_included: shadow,
             minimized: false,
+            handle: None,
         }
     }
 
