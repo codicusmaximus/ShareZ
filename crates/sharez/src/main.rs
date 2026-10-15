@@ -436,23 +436,24 @@ fn connect(ui: &Rc<Ui>) {
 async fn start_services(ui: Rc<Ui>) {
     // Portals need to know which app is asking. A Flatpak tells them; a plain install must say.
     if let Ok(id) = ashpd::AppID::try_from(APP_ID)
-        && let Err(e) = ashpd::register_host_app(id).await
+        && let Err(e) = hotkeys::answered(ashpd::register_host_app(id)).await
     {
         eprintln!("Could not register with the desktop portal: {e}");
     }
     let Some(session) = Session::detect() else {
         return;
     };
-    let (tx, rx) = async_channel::unbounded::<tray::Action>();
-    let tray = Tray::start(&session, tx).await;
-    if tray.is_none() {
-        eprintln!("No tray: open the ShareZ window by starting ShareZ again.");
-    }
-    *ui.tray.borrow_mut() = tray;
-    let app = ui.app.clone();
+    // The tray and the shortcuts start side by side, so neither waits on the other.
+    let tray_ui = ui.clone();
     glib::spawn_future_local(async move {
+        let (tx, rx) = async_channel::unbounded::<tray::Action>();
+        let tray = Tray::start(&session, tx).await;
+        if tray.is_none() {
+            eprintln!("No tray: open the ShareZ window by starting ShareZ again.");
+        }
+        *tray_ui.tray.borrow_mut() = tray;
         while let Ok(action) = rx.recv().await {
-            app.activate_action(action, None);
+            tray_ui.app.activate_action(action, None);
         }
     });
     bind_shortcuts(&ui).await;
@@ -467,7 +468,16 @@ async fn bind_shortcuts(ui: &Rc<Ui>) {
     ui.shortcuts.replace(None);
     let (tx, rx) = async_channel::unbounded::<Hotkey>();
     let keys = ui.settings.borrow().shortcuts.clone();
-    match Shortcuts::bind(&session, &keys, tx).await {
+    let asking = glib::clone!(
+        #[weak]
+        ui,
+        move || {
+            for (_, row) in &ui.shortcut_rows {
+                row.set_subtitle("Waiting for you to confirm it in the desktop's dialog…");
+            }
+        }
+    );
+    match Shortcuts::bind(&session, &keys, tx, asking).await {
         Ok((shortcuts, problems)) => {
             let shortcuts = Rc::new(shortcuts);
             shortcuts.on_change(glib::clone!(
@@ -678,7 +688,13 @@ async fn select_region(ui: &Ui, copy: bool) -> Result<Option<Picked>, String> {
         list_windows_for(&session),
         Elements::snapshot(),
     );
-    let frame = frame.map_err(|e| format!("Could not capture the screen: {e}"))?;
+    let frame = frame.map_err(|e| match e {
+        sharez_capture::Error::Denied => "Your desktop didn't let ShareZ take a screenshot. \
+            If it asked and you chose Deny, it remembers that: see Troubleshooting in the \
+            README to allow ShareZ again."
+            .to_owned(),
+        e => format!("Could not capture the screen: {e}"),
+    })?;
     let elements = elements
         .inspect_err(|e| eprintln!("No accessibility data, so no element snapping: {e}"))
         .ok();
@@ -723,7 +739,9 @@ async fn capture_screen(ui: &Rc<Ui>) {
         Ok(path) => ui.tell_saved("Screenshot copied", path, shown),
         Err(e) => {
             ui.window.present();
-            ui.toasts.add_toast(adw::Toast::new(&e));
+            let dialog = adw::AlertDialog::new(Some("Capture Failed"), Some(&e));
+            dialog.add_response("ok", "OK");
+            dialog.present(Some(&ui.window));
         }
     }
 }

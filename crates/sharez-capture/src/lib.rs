@@ -14,6 +14,10 @@ use sharez_core::{DisplayServer, Frame, Session};
 pub enum Error {
     #[error("screenshot portal: {0}")]
     Portal(#[from] ashpd::Error),
+    /// The desktop refused, usually because the user denied ShareZ screenshots once and the
+    /// desktop remembers that.
+    #[error("the desktop didn't allow ShareZ to take a screenshot")]
+    Denied,
     #[error("the portal returned {0}, which is not a local file")]
     NotAFile(String),
     #[error("reading the screenshot: {0}")]

@@ -194,19 +194,18 @@ pub enum Shortcuts {
 impl Shortcuts {
     /// Binds the shortcuts and sends each press to `pressed`. `x11` is the keys from the
     /// settings, used on X11 only. Also returns a sentence for each key that couldn't be bound.
+    /// `asking` runs when the desktop is about to ask the user to confirm the keys.
     pub async fn bind(
         desktop: &Desktop,
         x11: &[(Hotkey, String)],
         pressed: async_channel::Sender<Hotkey>,
+        asking: impl FnOnce(),
     ) -> Result<(Self, Vec<String>), String> {
         match desktop.display {
             DisplayServer::X11 => {
                 crate::x11keys::Grabs::start(x11, pressed).map(|(g, p)| (Self::X11(g), p))
             }
-            DisplayServer::Wayland => portal(pressed)
-                .await
-                .map(|s| (s, Vec::new()))
-                .map_err(|e| e.to_string()),
+            DisplayServer::Wayland => portal(pressed, asking).await.map(|s| (s, Vec::new())),
         }
     }
 
@@ -266,26 +265,48 @@ impl Shortcuts {
     }
 }
 
-async fn portal(pressed: async_channel::Sender<Hotkey>) -> ashpd::Result<Shortcuts> {
-    let portal = GlobalShortcuts::new().await?;
-    let session = portal
-        .create_session(CreateSessionOptions::default())
-        .await?;
-    let mut activated = portal.receive_activated().await?;
-    glib::spawn_future_local(async move {
-        while let Some(a) = activated.next().await {
-            if let Some(hotkey) = Hotkey::from_id(a.shortcut_id()) {
-                let _ = pressed.send(hotkey).await;
+/// How long the desktop gets to answer the calls that show no dialog.
+const ANSWER_TIMEOUT: u32 = 15;
+
+/// `call`, or an error if the desktop doesn't answer in time.
+pub async fn answered<T>(
+    call: impl std::future::Future<Output = ashpd::Result<T>>,
+) -> Result<T, String> {
+    let call = std::pin::pin!(call);
+    let timeout = std::pin::pin!(glib::timeout_future_seconds(ANSWER_TIMEOUT));
+    match futures_util::future::select(call, timeout).await {
+        futures_util::future::Either::Left((result, _)) => result.map_err(|e| e.to_string()),
+        futures_util::future::Either::Right(_) => Err("the desktop didn't answer".into()),
+    }
+}
+
+async fn portal(
+    pressed: async_channel::Sender<Hotkey>,
+    asking: impl FnOnce(),
+) -> Result<Shortcuts, String> {
+    let (portal, session, listed) = answered(async {
+        let portal = GlobalShortcuts::new().await?;
+        let session = portal
+            .create_session(CreateSessionOptions::default())
+            .await?;
+        let mut activated = portal.receive_activated().await?;
+        glib::spawn_future_local(async move {
+            while let Some(a) = activated.next().await {
+                if let Some(hotkey) = Hotkey::from_id(a.shortcut_id()) {
+                    let _ = pressed.send(hotkey).await;
+                }
             }
-        }
-    });
-    // The desktop remembers what the user chose, so only ask about shortcuts it doesn't know.
-    let listed = portal
-        .list_shortcuts(&session, ListShortcutsOptions::default())
-        .await?
-        .response()?
-        .shortcuts()
-        .to_vec();
+        });
+        // The desktop remembers what the user chose, so only ask about shortcuts it doesn't know.
+        let listed = portal
+            .list_shortcuts(&session, ListShortcutsOptions::default())
+            .await?
+            .response()?
+            .shortcuts()
+            .to_vec();
+        Ok((portal, session, listed))
+    })
+    .await?;
     let known = |h: Hotkey| listed.iter().any(|s| s.id() == h.id());
     let bound = if Hotkey::ALL.into_iter().all(known) {
         listed
@@ -296,10 +317,13 @@ async fn portal(pressed: async_channel::Sender<Hotkey>) -> ashpd::Result<Shortcu
                 NewShortcut::new(h.id(), h.description()).preferred_trigger(h.default_trigger())
             })
             .collect();
+        asking();
+        // No time limit: the desktop is waiting for the user.
         portal
             .bind_shortcuts(&session, &new, None, BindShortcutsOptions::default())
-            .await?
-            .response()?
+            .await
+            .and_then(|request| request.response())
+            .map_err(|e| e.to_string())?
             .shortcuts()
             .to_vec()
     };
