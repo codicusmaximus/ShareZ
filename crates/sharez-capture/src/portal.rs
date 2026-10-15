@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
-use ashpd::desktop::screenshot::Screenshot;
+use ashpd::desktop::{ResponseError, screenshot::Screenshot};
 use sharez_core::Frame;
 
 use crate::{Error, Result};
@@ -11,7 +11,13 @@ pub async fn freeze() -> Result<Frame> {
         .modal(false)
         .send()
         .await?
-        .response()?;
+        .response()
+        .map_err(|e| match e {
+            // GNOME answers a refused permission, or a permission dialog that failed, with
+            // "other" and no details.
+            ashpd::Error::Response(ResponseError::Other) => Error::Denied,
+            e => e.into(),
+        })?;
     let uri = response.uri().as_str();
     let path: PathBuf = url::Url::parse(uri)
         .ok()

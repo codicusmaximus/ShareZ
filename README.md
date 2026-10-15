@@ -102,6 +102,25 @@ gnome-extensions enable sharez-helper@codicusmaximus.github.io
 
 KDE Plasma and X11 need nothing extra.
 
+## Troubleshooting
+
+**ShareZ asks for permission to take screenshots.** On Wayland the desktop asks once whether
+ShareZ may take screenshots, and GNOME only asks while ShareZ's window has focus. So the first
+time, ShareZ opens its window with an **Allow…** button: press it and allow ShareZ in the dialog
+that follows. If you chose Deny, the desktop remembers that, and ShareZ says so. To allow it
+again, run:
+
+```sh
+gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
+  --object-path /org/freedesktop/impl/portal/PermissionStore \
+  --method org.freedesktop.impl.portal.PermissionStore.SetPermission \
+  screenshot true screenshot io.github.codicusmaximus.ShareZ "['yes']"
+```
+
+**Shortcuts say "Unavailable".** The desktop has no global shortcuts portal (GNOME before 48, for
+example). The window says why. `sharez --capture` and `sharez --record` still work from your
+desktop's own custom shortcuts.
+
 ## Building
 
 You need Rust 1.92 or newer, and GTK 4.14+, libadwaita 1.5+ and GStreamer 1.20+ development
