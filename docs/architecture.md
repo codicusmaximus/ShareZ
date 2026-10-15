@@ -151,8 +151,10 @@ goes through app actions (`capture`, `record`, `stop-recording`, `discard-record
 - **Clipboard.** Wayland only lets the focused app set the clipboard, and with the window hidden
   that is the region overlay. The screenshot is copied while the overlay is still open, before it
   closes, and the clipboard stays served for as long as ShareZ runs.
-- **Feedback.** With the window open, results are toasts; with it hidden, notifications whose
-  click opens the file.
+- **Feedback.** With the window open, results are toasts; with it hidden, notifications. A
+  screenshot's click opens the image; a recording's shows the file selected in the file manager
+  (`GtkFileLauncher` asks `org.freedesktop.FileManager1.ShowItems`), ready to drag. A button on
+  each notification does the other.
 
 ## Not built yet
 
