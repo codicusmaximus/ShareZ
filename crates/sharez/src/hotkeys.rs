@@ -210,6 +210,23 @@ pub fn readable(description: &str) -> String {
     parts.join("+")
 }
 
+/// A shortcut as a GTK accelerator (`<Control><Shift>Print`), from its readable form.
+pub fn gtk_accel(label: &str) -> Option<String> {
+    let t = Trigger::parse(label)?;
+    let m = t.modifiers;
+    let mut accel: String = [
+        (m.ctrl, "<Control>"),
+        (m.alt, "<Alt>"),
+        (m.shift, "<Shift>"),
+        (m.logo, "<Super>"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    accel.push_str(&t.key);
+    Some(accel)
+}
+
 /// The shortcuts while they are bound. Dropping it unbinds them.
 pub enum Shortcuts {
     Portal {
@@ -248,6 +265,20 @@ impl Shortcuts {
                 .filter_map(|s| Some((Hotkey::from_id(s.id())?, readable(s.trigger_description()))))
                 .collect(),
             Self::X11(grabs) => grabs.labels(),
+        }
+    }
+
+    /// The keys as GTK accelerators, for ShareZ's own windows. A desktop's global shortcuts don't
+    /// fire while the app that bound them has focus (GNOME passes the key to it instead), so the
+    /// window has to handle them itself. X11 grabs work everywhere and need none.
+    pub fn window_accels(&self) -> Vec<(Hotkey, String)> {
+        match self {
+            Self::Portal { .. } => self
+                .labels()
+                .into_iter()
+                .filter_map(|(h, label)| Some((h, gtk_accel(&label)?)))
+                .collect(),
+            Self::X11(_) => Vec::new(),
         }
     }
 
@@ -396,6 +427,20 @@ mod tests {
         assert_eq!(readable("Press <Control>Print"), "Ctrl+Print");
         assert_eq!(readable("Press <Shift><Control>Print"), "Shift+Ctrl+Print");
         assert_eq!(readable("Meta+Shift+R"), "Meta+Shift+R");
+    }
+
+    #[test]
+    fn labels_become_window_accels() {
+        assert_eq!(gtk_accel("Ctrl+Print").as_deref(), Some("<Control>Print"));
+        assert_eq!(
+            gtk_accel(&readable("Press <Shift><Control>Print")).as_deref(),
+            Some("<Control><Shift>Print")
+        );
+        assert_eq!(
+            gtk_accel("Meta+Shift+R").as_deref(),
+            Some("<Shift><Super>R")
+        );
+        assert_eq!(gtk_accel("not a key+"), None);
     }
 
     #[test]

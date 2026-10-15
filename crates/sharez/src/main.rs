@@ -604,12 +604,21 @@ impl Ui {
 
     /// Shows each shortcut's keys, or why there are none.
     fn show_shortcuts(&self, error: Option<&str>) {
-        let labels = self
+        let (labels, accels) = self
             .shortcuts
             .borrow()
             .as_ref()
-            .map(|s| s.labels())
+            .map(|s| (s.labels(), s.window_accels()))
             .unwrap_or_default();
+        for hotkey in Hotkey::ALL {
+            let accel: Vec<&str> = accels
+                .iter()
+                .filter(|(h, _)| *h == hotkey)
+                .map(|(_, a)| a.as_str())
+                .collect();
+            self.app
+                .set_accels_for_action(&format!("app.{}", hotkey.action()), &accel);
+        }
         for (hotkey, row) in &self.shortcut_rows {
             let label = labels.iter().find(|(h, _)| h == hotkey).map(|(_, l)| l);
             row.set_subtitle(match (label, error) {
