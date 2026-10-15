@@ -1,5 +1,5 @@
-//! What happens to a captured region: saved as PNG under Pictures/ShareZ and copied to the
-//! clipboard.
+//! What happens to a capture: screenshots are saved as PNG under Pictures/ShareZ and recordings
+//! under Videos/ShareZ, and either is copied to the clipboard.
 
 use std::{fs::File, io::BufWriter, path::PathBuf};
 
@@ -7,10 +7,45 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 use sharez_core::{Frame, PixelRect};
 
-fn save_dir() -> PathBuf {
-    glib::user_special_dir(glib::UserDirectory::Pictures)
+/// A new, timestamped file name in the user's `kind` folder, under ShareZ/.
+pub fn new_file(kind: glib::UserDirectory, extension: &str) -> Result<PathBuf, String> {
+    let dir = glib::user_special_dir(kind)
         .unwrap_or_else(glib::home_dir)
-        .join("ShareZ")
+        .join("ShareZ");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
+    let name = chrono::Local::now().format("ShareZ_%Y-%m-%d_%H-%M-%S");
+    Ok(dir.join(format!("{name}.{extension}")))
+}
+
+/// "Saved … and copied it", with a button that opens the file.
+fn saved_toast(path: PathBuf) -> adw::Toast {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let toast = adw::Toast::builder()
+        .title(format!("Saved {name} and copied it"))
+        .button_label("Open")
+        .build();
+    toast.connect_button_clicked(move |_| {
+        gtk::FileLauncher::new(Some(&gio::File::for_path(&path))).launch(
+            None::<&gtk::Window>,
+            None::<&gio::Cancellable>,
+            |_| {},
+        );
+    });
+    toast
+}
+
+/// Copies a saved recording to the clipboard as a file, which chat apps and file managers paste.
+pub fn deliver_video(window: &impl IsA<gtk::Widget>, path: PathBuf) -> adw::Toast {
+    let files = gdk::FileList::from_array(&[gio::File::for_path(&path)]);
+    window
+        .clipboard()
+        .set_content(Some(&gdk::ContentProvider::for_value(&files.to_value())))
+        .ok();
+    saved_toast(path)
 }
 
 fn write_png(path: &std::path::Path, image: &Frame) -> Result<(), String> {
@@ -34,13 +69,7 @@ pub fn deliver(
         .crop(region)
         .ok_or("The selected region is outside the screen.")?;
 
-    let dir = save_dir();
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
-    let name = chrono::Local::now()
-        .format("ShareZ_%Y-%m-%d_%H-%M-%S.png")
-        .to_string();
-    let path = dir.join(&name);
+    let path = new_file(glib::UserDirectory::Pictures, "png")?;
     write_png(&path, &image).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
 
     let texture = gdk::MemoryTexture::new(
@@ -52,16 +81,5 @@ pub fn deliver(
     );
     window.clipboard().set_texture(&texture);
 
-    let toast = adw::Toast::builder()
-        .title(format!("Saved {name} and copied it"))
-        .button_label("Open")
-        .build();
-    toast.connect_button_clicked(move |_| {
-        gtk::FileLauncher::new(Some(&gio::File::for_path(&path))).launch(
-            None::<&gtk::Window>,
-            None::<&gio::Cancellable>,
-            |_| {},
-        );
-    });
-    Ok(toast)
+    Ok(saved_toast(path))
 }

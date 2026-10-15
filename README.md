@@ -3,9 +3,10 @@
 A screen capture and recording tool for Linux, in the spirit of [ShareX](https://getsharex.com/).
 It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 
-> **Status:** early development. Region screenshots work: press **Capture screen**, then drag a
-> region or click a window or an element inside one. The PNG is saved to `~/Pictures/ShareZ` and
-> copied to the clipboard.
+> **Status:** early development. Region screenshots and region recordings work: press **Capture
+> Screen** or **Record Region**, then drag a region or click a window or an element inside one.
+> Screenshots go to `~/Pictures/ShareZ`, recordings to `~/Videos/ShareZ`, and either is copied to
+> the clipboard.
 
 ## Goals
 
@@ -42,6 +43,26 @@ Capture works like ShareX's region capture:
 Elements inside windows come from the accessibility tree, which ShareZ turns on for your session
 the first time it runs. Apps started before that may need a restart to show their elements.
 
+## Recording a region
+
+Press **Record Region** and pick the region the same way as for a screenshot. ShareZ then records
+it at 30 fps until you press **Stop Recording** (the ShareZ window minimises itself while
+recording; the notification has a Stop button too). **Discard** throws the recording away.
+
+Choose **Desktop Audio** (what you hear), **Microphone**, or both under *Recording Audio*. With
+both, they are mixed into one track. If your voice is distorted, turn the input volume down in
+your sound settings; the spike found laptop mics clipping at their default level.
+
+On Wayland the desktop asks which screen to share the first time you record. ShareZ remembers the
+answer, so later recordings start straight away.
+
+Recordings are MP4 (H.264) when an H.264 encoder is installed, otherwise WebM (VP8). ShareZ tells
+you which GStreamer plugins are missing if it can't record. On Fedora:
+
+```sh
+sudo dnf install pipewire-gstreamer gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugin-openh264
+```
+
 ### GNOME: the ShareZ Helper extension
 
 GNOME doesn't let normal apps see which window is on top. Without help ShareZ guesses, and can
@@ -58,15 +79,16 @@ KDE Plasma and X11 need nothing extra.
 
 ## Building
 
-You need Rust 1.92 or newer, GTK 4.14+ and libadwaita 1.5+ development files.
+You need Rust 1.92 or newer, and GTK 4.14+, libadwaita 1.5+ and GStreamer 1.20+ development
+files.
 
 ```sh
 # Fedora
-sudo dnf install gtk4-devel libadwaita-devel
+sudo dnf install gtk4-devel libadwaita-devel gstreamer1-devel
 # Debian / Ubuntu
-sudo apt install libgtk-4-dev libadwaita-1-dev
+sudo apt install libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev
 # Arch
-sudo pacman -S gtk4 libadwaita
+sudo pacman -S gtk4 libadwaita gstreamer
 
 cargo run                      # the app
 cargo run -- --list-windows    # print the windows ShareZ can snap to, as JSON

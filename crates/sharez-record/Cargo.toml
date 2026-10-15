@@ -1,0 +1,19 @@
+[package]
+name = "sharez-record"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screencast"] }
+async-channel = "2.5.0"
+async-io = "2.6.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+gstreamer = "0.25"
+sharez-core = { version = "0.1.0", path = "../sharez-core" }
+thiserror = "2.0.21"
+
+[lints]
+workspace = true
