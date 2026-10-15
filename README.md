@@ -3,8 +3,9 @@
 A screen capture and recording tool for Linux, in the spirit of [ShareX](https://getsharex.com/).
 It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 
-> **Status:** early development. The feasibility spike is done and the application skeleton is
-> in place; nothing is useful to end users yet.
+> **Status:** early development. Region screenshots work: press **Capture screen**, then drag a
+> region or click a window or an element inside one. The PNG is saved to `~/Pictures/ShareZ` and
+> copied to the clipboard.
 
 ## Goals
 
@@ -23,6 +24,37 @@ It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 2. Architecture and repository skeleton.
 3. Region screenshot release.
 4. Region video recording.
+
+## Capturing a region
+
+Capture works like ShareX's region capture:
+
+| Do this | To get |
+|---|---|
+| Drag | A region, with a magnified pixel grid around the cursor |
+| Shift while dragging | A square region |
+| Ctrl while dragging | Move the region instead of resizing it |
+| Click without dragging | The highlighted window, or the button, panel or field inside it |
+| Scroll | Zoom the magnifier in or out |
+| Space | The whole screen |
+| Esc or right-click | Cancel (right-click during a drag only cancels the drag) |
+
+Elements inside windows come from the accessibility tree, which ShareZ turns on for your session
+the first time it runs. Apps started before that may need a restart to show their elements.
+
+### GNOME: the ShareZ Helper extension
+
+GNOME doesn't let normal apps see which window is on top. Without help ShareZ guesses, and can
+highlight a window that is behind another one. The small ShareZ Helper shell extension in
+[`gnome-extension/`](gnome-extension/) tells it the real stacking order and exact window edges:
+
+```sh
+cp -r gnome-extension/sharez-helper@codicusmaximus.github.io ~/.local/share/gnome-shell/extensions/
+# Log out and back in, then:
+gnome-extensions enable sharez-helper@codicusmaximus.github.io
+```
+
+KDE Plasma and X11 need nothing extra.
 
 ## Building
 

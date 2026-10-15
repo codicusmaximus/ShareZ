@@ -8,7 +8,7 @@ server, while **how windows are found** depends on the desktop.
 |---|---|
 | `sharez-core` | Geometry (`Rect`, `PixelRect`, `Mapping`), the RGBA `Frame` and session detection. No platform dependencies. |
 | `sharez-capture` | Freezing the screen: the screenshot portal on Wayland, the root window on X11. |
-| `sharez-windows` | Listing windows: a KWin script on KDE, GNOME Shell's accessibility tree on GNOME, EWMH on X11. |
+| `sharez-windows` | Listing windows (a KWin script on KDE, the ShareZ Helper extension or GNOME Shell's accessibility tree on GNOME, EWMH on X11) and finding elements inside them through AT-SPI. |
 | `sharez` | The GTK 4 / libadwaita application. |
 
 ## Backends
@@ -16,8 +16,8 @@ server, while **how windows are found** depends on the desktop.
 | | GNOME Wayland | KDE Wayland | X11 |
 |---|---|---|---|
 | Freeze frame | Portal Screenshot | Portal Screenshot | Root `GetImage` |
-| Window rectangles | GNOME Shell a11y tree | KWin script | EWMH |
-| Elements inside windows | AT-SPI *(milestone 3)* | AT-SPI *(milestone 3)* | AT-SPI *(milestone 3)* |
+| Window rectangles | ShareZ Helper extension, else GNOME Shell a11y tree | KWin script | EWMH |
+| Elements inside windows | AT-SPI | AT-SPI | AT-SPI |
 | Recording | Portal ScreenCast + PipeWire *(milestone 4)* | Same | `ximagesrc` *(milestone 4)* |
 
 Backends are plain enums chosen once from the `Session` (`Backend::for_session`,
@@ -51,11 +51,37 @@ GTK 4 with libadwaita:
 The trade-off is that ShareZ looks like a GNOME app on KDE. Qt was the alternative, but its Rust
 bindings are far less mature.
 
+## Region capture
+
+`sharez/src/overlay/` follows ShareX's region capture (`ShareX.ScreenCaptureLib`), in "quick
+capture" mode: releasing the mouse captures straight away, and there are no resize handles.
+
+- `selector.rs` is the pure state machine (drag threshold, square and move modifiers, cancel
+  rules, magnifier zoom) in buffer pixels, with unit tests.
+- `view.rs` draws the frozen frame, dimming, the two-tone dashed border, size label and the
+  magnifier with `GtkSnapshot`, scaling the frame with nearest-neighbour filtering.
+- `mod.rs` owns the full-screen window and its input controllers, and the `Snapper`, which finds
+  what is under the pointer.
+
+### Window and element snapping
+
+Windows are listed topmost first. Elements come from AT-SPI, with two wrinkles:
+
+- On Wayland apps only know positions relative to their own window, so each listed window is
+  matched to the app's accessible toplevel by size (and title, when there is one) and element
+  rectangles are offset by the window's client area. On GNOME without the helper extension the
+  same match tells how much GTK 4 shadow to trim from the shell's rectangle.
+- GTK 4 answers a hit test with the deepest widget, often a button's label. ShareZ walks back up
+  through the parents and snaps a label, icon or image to the control that contains it.
+
+The ShareZ Helper GNOME extension exists because GNOME Shell's accessibility tree is not in
+stacking order and `org.gnome.Shell.Introspect` is denied to normal apps. It exposes one D-Bus
+method, `GetWindows`, returning the windows on the active workspace from Mutter, topmost first.
+
 ## Not built yet
 
-- Region selection, window and element snapping, magnifier: milestone 3, on top of the overlay.
 - Multi-monitor overlay: the frozen frame covers all monitors, but the overlay is one full-screen
-  window today. Milestone 3 places one overlay per monitor using each monitor's `Mapping`.
+  window and assumes the screen starts at 0,0. It will become one overlay per monitor using each
+  monitor's `Mapping`.
+- Moving the cursor with arrow keys, as ShareX does: Wayland doesn't let apps warp the pointer.
 - Recording: milestone 4, through `gstreamer-rs` in-process.
-- GNOME window titles and stacking order: the shell's tree has neither; milestone 3 matches shell
-  rectangles against AT-SPI application windows.

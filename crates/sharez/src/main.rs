@@ -1,5 +1,6 @@
 //! The ShareZ application.
 
+mod output;
 mod overlay;
 
 use std::time::Duration;
@@ -7,6 +8,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk::glib;
 use sharez_core::Session;
+use sharez_windows::{Elements, Target};
 
 const APP_ID: &str = "io.github.codicusmaximus.ShareZ";
 
@@ -16,6 +18,12 @@ fn main() -> glib::ExitCode {
         return list_windows();
     }
     let app = adw::Application::builder().application_id(APP_ID).build();
+    // Apps only publish their accessibility trees (used to snap to elements) while it is on.
+    glib::spawn_future_local(async {
+        if let Err(e) = sharez_windows::ensure_accessibility().await {
+            eprintln!("Could not enable accessibility: {e}");
+        }
+    });
     app.connect_activate(build_window);
     app.run()
 }
@@ -78,7 +86,7 @@ fn build_window(app: &adw::Application) {
         toasts,
         move |_| {
             glib::spawn_future_local(async move {
-                if let Err(e) = capture_screen(&window).await {
+                if let Err(e) = capture_screen(&window, &toasts).await {
                     window.present();
                     toasts.add_toast(adw::Toast::new(&e));
                 }
@@ -88,21 +96,63 @@ fn build_window(app: &adw::Application) {
     window.present();
 }
 
-/// Hides ShareZ, freezes the screen and opens the overlay on the frozen frame.
-async fn capture_screen(window: &adw::ApplicationWindow) -> Result<(), String> {
+/// Hides ShareZ, freezes the screen, lists windows and opens the region overlay.
+async fn capture_screen(
+    window: &adw::ApplicationWindow,
+    toasts: &adw::ToastOverlay,
+) -> Result<(), String> {
     let session = Session::detect().ok_or("No display server found.")?;
     window.set_visible(false);
     // Give the compositor a moment to remove our window before the screen is captured.
     glib::timeout_future(Duration::from_millis(200)).await;
-    let frame = sharez_capture::Backend::for_session(&session)
-        .freeze()
-        .await
-        .map_err(|e| format!("Could not capture the screen: {e}"))?;
-    let overlay = overlay::show(window.application().as_ref(), &frame);
-    overlay.connect_destroy(glib::clone!(
-        #[weak]
-        window,
-        move |_| window.present()
-    ));
+    let (frame, windows, elements) = futures_util::join!(
+        sharez_capture::Backend::for_session(&session).freeze(),
+        list_windows_for(&session),
+        Elements::snapshot(),
+    );
+    let frame = frame.map_err(|e| format!("Could not capture the screen: {e}"))?;
+    let elements = elements
+        .inspect_err(|e| eprintln!("No accessibility data, so no element snapping: {e}"))
+        .ok();
+    let targets = match &elements {
+        Some(e) => e.targets(windows),
+        None => windows.into_iter().map(Target::opaque).collect(),
+    };
+    let snapshot = overlay::Snapshot {
+        frame,
+        targets,
+        elements,
+    };
+    let frame_copy = snapshot.frame.clone();
+    overlay::show(
+        window.application().as_ref(),
+        snapshot,
+        glib::clone!(
+            #[weak]
+            window,
+            #[weak]
+            toasts,
+            move |region| {
+                window.present();
+                if let Some(region) = region {
+                    match output::deliver(&window, &frame_copy, region) {
+                        Ok(toast) => toasts.add_toast(toast),
+                        Err(e) => toasts.add_toast(adw::Toast::new(&e)),
+                    }
+                }
+            }
+        ),
+    );
     Ok(())
+}
+
+async fn list_windows_for(session: &Session) -> Vec<sharez_windows::Window> {
+    let Some(source) = sharez_windows::Source::for_session(session) else {
+        return Vec::new();
+    };
+    source
+        .windows()
+        .await
+        .inspect_err(|e| eprintln!("Could not list windows with {source:?}: {e}"))
+        .unwrap_or_default()
 }
