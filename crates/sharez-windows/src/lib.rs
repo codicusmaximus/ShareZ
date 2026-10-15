@@ -17,6 +17,7 @@ mod kwin;
 
 pub use a11y::ensure_enabled as ensure_accessibility;
 pub use elements::{Elements, Target};
+pub use gnome::{helper_features, helper_set_recording};
 use serde::Serialize;
 use sharez_core::{Desktop, DisplayServer, Rect, Session};
 

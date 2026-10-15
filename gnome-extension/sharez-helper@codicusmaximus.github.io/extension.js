@@ -1,16 +1,30 @@
-// ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first, and
-// places ShareZ's recording outline with PlaceWindow. Mutter gives normal Wayland clients neither
-// window positions nor stacking order, nor a way to position their own windows.
+// ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first,
+// places ShareZ's recording outline with PlaceWindow, and shows ShareZ's icon in the top bar while
+// ShareZ runs. Mutter gives normal Wayland clients neither window positions nor stacking order,
+// nor a way to position their own windows, and GNOME has no tray for them.
 
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const BUS_NAME = 'io.github.codicusmaximus.ShareZ.ShellHelper';
 const OBJECT_PATH = '/io/github/codicusmaximus/ShareZ/ShellHelper';
+const APP_ID = 'io.github.codicusmaximus.ShareZ';
+const APP_PATH = '/io/github/codicusmaximus/ShareZ';
 const IFACE = `
 <node>
   <interface name="io.github.codicusmaximus.ShareZ.ShellHelper">
+    <method name="Features">
+      <arg type="as" direction="out" name="features"/>
+    </method>
+    <method name="SetRecording">
+      <arg type="b" direction="in" name="recording"/>
+    </method>
     <method name="GetWindows">
       <arg type="s" direction="out" name="json"/>
     </method>
@@ -38,18 +52,81 @@ function kind(w) {
     }
 }
 
+// Runs one of ShareZ's app actions, as its own menus do.
+function activate(action) {
+    Gio.DBus.session.call(APP_ID, APP_PATH, 'org.gtk.Actions', 'Activate',
+        new GLib.Variant('(sava{sv})', [action, [], {}]), null,
+        Gio.DBusCallFlags.NONE, -1, null, null);
+}
+
 export default class ShareZHelperExtension extends Extension {
     enable() {
+        this._recording = false;
         this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
         this._dbus.export(Gio.DBus.session, OBJECT_PATH);
         this._nameId = Gio.bus_own_name(Gio.BusType.SESSION, BUS_NAME,
             Gio.BusNameOwnerFlags.NONE, null, null, null);
+        // The icon is there exactly while ShareZ runs.
+        this._watchId = Gio.bus_watch_name(Gio.BusType.SESSION, APP_ID,
+            Gio.BusNameWatcherFlags.NONE,
+            () => this._showIndicator(),
+            () => this._hideIndicator());
     }
 
     disable() {
+        Gio.bus_unwatch_name(this._watchId);
+        this._hideIndicator();
         Gio.bus_unown_name(this._nameId);
         this._dbus.unexport();
         this._dbus = null;
+    }
+
+    Features() {
+        return ['windows', 'place', 'indicator'];
+    }
+
+    SetRecording(recording) {
+        this._recording = recording;
+        this._updateIndicator();
+    }
+
+    _showIndicator() {
+        if (this._indicator)
+            return;
+        this._indicator = new PanelMenu.Button(0.0, 'ShareZ', false);
+        this._icon = new St.Icon({style_class: 'system-status-icon'});
+        this._indicator.add_child(this._icon);
+        const menu = this._indicator.menu;
+        const item = (label, action) => {
+            const i = new PopupMenu.PopupMenuItem(label);
+            i.connect('activate', () => activate(action));
+            menu.addMenuItem(i);
+            return i;
+        };
+        this._capture = item('Capture Region', 'capture');
+        this._record = item('Record Region', 'record');
+        this._discard = item('Discard Recording', 'discard-recording');
+        menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        item('Open ShareZ', 'show');
+        item('Quit', 'quit');
+        Main.panel.addToStatusArea(this.uuid, this._indicator);
+        this._updateIndicator();
+    }
+
+    _hideIndicator() {
+        this._recording = false;
+        this._indicator?.destroy();
+        this._indicator = null;
+    }
+
+    _updateIndicator() {
+        if (!this._indicator)
+            return;
+        const recording = this._recording;
+        this._icon.icon_name = recording ? 'media-record-symbolic' : 'applets-screenshooter-symbolic';
+        this._capture.visible = !recording;
+        this._discard.visible = recording;
+        this._record.label.text = recording ? 'Stop Recording' : 'Record Region';
     }
 
     GetWindows() {

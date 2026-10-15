@@ -1,5 +1,5 @@
 //! What happens to a capture: screenshots are saved as PNG under Pictures/ShareZ and recordings
-//! under Videos/ShareZ, and either is copied to the clipboard.
+//! under Videos/ShareZ, and either is always copied to the clipboard.
 
 use std::{fs::File, io::BufWriter, path::PathBuf};
 
@@ -18,34 +18,54 @@ pub fn new_file(kind: glib::UserDirectory, extension: &str) -> Result<PathBuf, S
     Ok(dir.join(format!("{name}.{extension}")))
 }
 
-/// "Saved … and copied it", with a button that opens the file.
-fn saved_toast(path: PathBuf) -> adw::Toast {
-    let name = path
-        .file_name()
+/// The file's name, for messages.
+fn name(path: &std::path::Path) -> String {
+    path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// "Saved … and copied it", with a button that opens the file.
+pub fn saved_toast(path: PathBuf) -> adw::Toast {
     let toast = adw::Toast::builder()
-        .title(format!("Saved {name} and copied it"))
+        .title(format!("Saved {} and copied it", name(&path)))
         .button_label("Open")
         .build();
-    toast.connect_button_clicked(move |_| {
-        gtk::FileLauncher::new(Some(&gio::File::for_path(&path))).launch(
-            None::<&gtk::Window>,
-            None::<&gio::Cancellable>,
-            |_| {},
-        );
-    });
+    toast.connect_button_clicked(move |_| open(&path));
     toast
 }
 
+/// The same news as a desktop notification, for when the window is hidden. Clicking it opens the
+/// file.
+pub fn saved_notification(title: &str, path: &std::path::Path) -> gio::Notification {
+    let n = gio::Notification::new(title);
+    n.set_body(Some(&format!("Saved {}", name(path))));
+    n.set_default_action_and_target_value(
+        "app.open-file",
+        Some(&path.to_string_lossy().to_variant()),
+    );
+    n
+}
+
+/// Opens a file in its default app.
+pub fn open(path: &std::path::Path) {
+    gtk::FileLauncher::new(Some(&gio::File::for_path(path))).launch(
+        None::<&gtk::Window>,
+        None::<&gio::Cancellable>,
+        |_| {},
+    );
+}
+
 /// Copies a saved recording to the clipboard as a file, which chat apps and file managers paste.
-pub fn deliver_video(window: &impl IsA<gtk::Widget>, path: PathBuf) -> adw::Toast {
-    let files = gdk::FileList::from_array(&[gio::File::for_path(&path)]);
-    window
+pub fn copy_video(path: &std::path::Path) {
+    let Some(display) = gdk::Display::default() else {
+        return;
+    };
+    let files = gdk::FileList::from_array(&[gio::File::for_path(path)]);
+    display
         .clipboard()
         .set_content(Some(&gdk::ContentProvider::for_value(&files.to_value())))
         .ok();
-    saved_toast(path)
 }
 
 fn write_png(path: &std::path::Path, image: &Frame) -> Result<(), String> {
@@ -59,27 +79,28 @@ fn write_png(path: &std::path::Path, image: &Frame) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Saves and copies the region, returning a toast that says so.
-pub fn deliver(
-    window: &impl IsA<gtk::Widget>,
-    frame: &Frame,
-    region: PixelRect,
-) -> Result<adw::Toast, String> {
+/// Crops the region out of the frame and puts it on the clipboard. Call it while one of ShareZ's
+/// windows has focus (the overlay): on Wayland only the focused app may set the clipboard.
+pub fn copy_image(frame: &Frame, region: PixelRect) -> Result<Frame, String> {
     let image = frame
         .crop(region)
         .ok_or("The selected region is outside the screen.")?;
-
-    let path = new_file(glib::UserDirectory::Pictures, "png")?;
-    write_png(&path, &image).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
-
     let texture = gdk::MemoryTexture::new(
         image.width as i32,
         image.height as i32,
         gdk::MemoryFormat::R8g8b8a8,
-        &glib::Bytes::from_owned(image.data),
+        &glib::Bytes::from(&image.data[..]),
         image.width as usize * 4,
     );
-    window.clipboard().set_texture(&texture);
+    if let Some(display) = gdk::Display::default() {
+        display.clipboard().set_texture(&texture);
+    }
+    Ok(image)
+}
 
-    Ok(saved_toast(path))
+/// Saves a screenshot as PNG under Pictures/ShareZ.
+pub fn save_image(image: &Frame) -> Result<PathBuf, String> {
+    let path = new_file(glib::UserDirectory::Pictures, "png")?;
+    write_png(&path, image).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    Ok(path)
 }

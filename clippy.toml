@@ -1,1 +1,1 @@
-doc-valid-idents = ["ShareZ", "ShareX", "XWayland", "KWin", "PipeWire", "GStreamer", "PulseAudio", "WebM", "libadwaita", ".."]
+doc-valid-idents = ["ShareZ", "ShareX", "XWayland", "KWin", "PipeWire", "GStreamer", "PulseAudio", "WebM", "libadwaita", "StatusNotifierItem", "AppIndicator", ".."]
