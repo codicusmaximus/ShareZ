@@ -10,7 +10,7 @@ server, while **how windows are found** depends on the desktop.
 | `sharez-capture` | Freezing the screen: the screenshot portal on Wayland, the root window on X11. |
 | `sharez-windows` | Listing windows (a KWin script on KDE, the ShareZ Helper extension or GNOME Shell's accessibility tree on GNOME, EWMH on X11) and finding elements inside them through AT-SPI. |
 | `sharez-record` | Region recording: the screencast portal or X11 root window into a GStreamer pipeline that crops, encodes and mixes audio. |
-| `sharez` | The GTK 4 / libadwaita application. |
+| `sharez` | The GTK 4 / libadwaita application, which runs in the background with a tray icon and global shortcuts. |
 
 ## Backends
 
@@ -116,11 +116,34 @@ pulsesrc (default input)     ┴→ audiomixer → limiter → AAC or Opus ─�
 While recording, the main window minimises itself and shows a timer with Stop and Discard, and a
 notification offers Stop.
 
+## Running in the background
+
+The app holds itself open (`ApplicationHoldGuard`), so closing the window only hides it. Everything
+goes through app actions (`capture`, `record`, `stop-recording`, `discard-recording`, `show`,
+`quit`): the window's buttons, the tray menu, the global shortcuts, notifications, and
+`sharez --capture`/`--record`, which GApplication forwards to the running instance over D-Bus.
+
+- **Tray icon.** GNOME has no tray, so the ShareZ Helper extension shows a top-bar icon while
+  `io.github.codicusmaximus.ShareZ` is on the session bus and calls the app's actions
+  (`org.gtk.Actions.Activate`) from its menu; ShareZ tells it when a recording starts and stops
+  (`SetRecording`). ShareZ checks the extension's `Features` for `indicator` and otherwise
+  publishes a StatusNotifierItem with `ksni`, which KDE, most X11 panels and GNOME's AppIndicator
+  extension show.
+- **Global shortcuts.** On Wayland the `GlobalShortcuts` portal binds them. ShareZ registers its
+  app ID with the portal's host registry first, lists what the desktop already has for it, and
+  only asks to bind (which shows the desktop's dialog) when a shortcut is missing. On X11 ShareZ
+  grabs the keys on the root window (with and without Caps Lock and Num Lock) on a thread of its
+  own, and keeps them in `settings.ini`.
+- **Clipboard.** Wayland only lets the focused app set the clipboard, and with the window hidden
+  that is the region overlay. The screenshot is copied while the overlay is still open, before it
+  closes, and the clipboard stays served for as long as ShareZ runs.
+- **Feedback.** With the window open, results are toasts; with it hidden, notifications whose
+  click opens the file.
+
 ## Not built yet
 
 - Multi-monitor overlay: the frozen frame covers all monitors, but the overlay is one full-screen
   window and assumes the screen starts at 0,0. It will become one overlay per monitor using each
   monitor's `Mapping`.
 - Moving the cursor with arrow keys, as ShareX does: Wayland doesn't let apps warp the pointer.
-- Recording extras: a global hotkey to stop, a microphone level meter and gain, and a start
-  countdown.
+- Recording extras: a microphone level meter and gain, and a start countdown.

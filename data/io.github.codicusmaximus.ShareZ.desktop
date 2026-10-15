@@ -8,3 +8,13 @@ Type=Application
 Categories=Utility;Graphics;
 Keywords=screenshot;screen;capture;record;screencast;
 StartupNotify=true
+X-GNOME-UsesNotifications=true
+Actions=capture;record;
+
+[Desktop Action capture]
+Name=Capture Region
+Exec=sharez --capture
+
+[Desktop Action record]
+Name=Record Region
+Exec=sharez --record

@@ -21,8 +21,10 @@ finish-args:
   - --talk-name=org.kde.KWin
   # GNOME: window positions and elements inside windows come from the accessibility tree.
   - --talk-name=org.a11y.Bus
-  # GNOME: window stacking from the ShareZ Helper shell extension.
+  # GNOME: window stacking and the top-bar icon from the ShareZ Helper shell extension.
   - --talk-name=io.github.codicusmaximus.ShareZ.ShellHelper
+  # The tray icon everywhere else.
+  - --talk-name=org.kde.StatusNotifierWatcher
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   build-args:

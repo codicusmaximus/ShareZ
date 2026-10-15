@@ -41,7 +41,8 @@ pub struct Selection {
 
 type Done = Box<dyn FnOnce(Option<Selection>)>;
 
-/// Opens the overlay. `done` gets the chosen region, or `None` if cancelled.
+/// Opens the overlay. `done` gets the chosen region, or `None` if cancelled, just before the
+/// overlay closes.
 pub fn show(
     app: Option<&gtk::Application>,
     snapshot: Snapshot,
@@ -77,10 +78,11 @@ pub fn show(
                 Outcome::Cancel => None,
                 Outcome::Nothing | Outcome::Redraw => return,
             };
-            window.destroy();
+            // While the overlay still has focus, so `done` can set the clipboard on Wayland.
             if let Some(done) = done.borrow_mut().take() {
                 done(result);
             }
+            window.destroy();
         }
     };
     let finish: Rc<dyn Fn(Outcome)> = Rc::new(finish);

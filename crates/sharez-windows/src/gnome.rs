@@ -54,6 +54,31 @@ pub async fn place(title: &str, rect: Rect) -> Result<bool> {
     .await
 }
 
+/// What the installed helper extension can do; empty without it. Versions before the top-bar
+/// icon have no `Features` method, so they also answer empty.
+pub async fn helper_features() -> Vec<String> {
+    let Ok(conn) = Connection::session().await else {
+        return Vec::new();
+    };
+    call(&conn, HELPER, HELPER_PATH, HELPER, "Features", &())
+        .await
+        .unwrap_or_default()
+}
+
+/// Tells the helper's top-bar icon whether ShareZ is recording.
+pub async fn helper_set_recording(recording: bool) -> Result<()> {
+    let conn = Connection::session().await?;
+    call::<_, ()>(
+        &conn,
+        HELPER,
+        HELPER_PATH,
+        HELPER,
+        "SetRecording",
+        &(recording,),
+    )
+    .await
+}
+
 /// A logical rectangle as whole pixels, rounded outwards.
 pub(crate) fn px(r: Rect) -> [i32; 4] {
     let (x, y) = (r.x.floor(), r.y.floor());

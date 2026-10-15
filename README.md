@@ -3,10 +3,10 @@
 A screen capture and recording tool for Linux, in the spirit of [ShareX](https://getsharex.com/).
 It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 
-> **Status:** early development. Region screenshots and region recordings work: press **Capture
-> Screen** or **Record Region**, then drag a region or click a window or an element inside one.
-> Screenshots go to `~/Pictures/ShareZ`, recordings to `~/Videos/ShareZ`, and either is copied to
-> the clipboard.
+> **Status:** early development. Region screenshots and region recordings work: press
+> **Ctrl+Print** or **Ctrl+Shift+Print** (or use the buttons, or ShareZ's top-bar icon), then drag a
+> region or click a window or an element inside one. Screenshots go to `~/Pictures/ShareZ`,
+> recordings to `~/Videos/ShareZ`, and either is always copied to the clipboard.
 
 ## Goals
 
@@ -25,6 +25,24 @@ It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 2. Architecture and repository skeleton.
 3. Region screenshot release.
 4. Region video recording.
+
+## Running in the background
+
+Once started, ShareZ keeps running when you close its window, ready for its shortcuts. Its icon
+sits in the top bar on GNOME (with the [ShareZ Helper extension](#gnome-the-sharez-helper-extension))
+and in the system tray on KDE Plasma and most X11 desktops, with Capture Region, Record Region,
+Open ShareZ and Quit. Turn on **Start at Login** in the window to have it ready after you log in.
+Ctrl+Q in the window, or Quit in the icon's menu, ends it.
+
+| Shortcut | Does |
+|---|---|
+| Ctrl+Print | Capture a region |
+| Ctrl+Shift+Print | Start recording a region, or stop the recording |
+
+On Wayland the desktop owns global shortcuts: the first time ShareZ runs, GNOME or KDE asks you to
+confirm these keys (or pick others), and you can change them later in the desktop's keyboard
+settings. On X11, click a shortcut in the ShareZ window to change it. `sharez --capture` and
+`sharez --record` do the same from a script or your own shortcut.
 
 ## Capturing a region
 
@@ -46,8 +64,8 @@ the first time it runs. Apps started before that may need a restart to show thei
 ## Recording a region
 
 Press **Record Region** and pick the region the same way as for a screenshot. ShareZ then records
-it at 30 fps until you press **Stop Recording** (the ShareZ window minimises itself while
-recording; the notification has a Stop button too). Stopping the share from the desktop, such as
+it at 30 fps until you press **Stop Recording** or the record shortcut again (an open ShareZ
+window minimises itself while recording; the tray icon and the notification can stop it too). Stopping the share from the desktop, such as
 GNOME's stop button in the top bar, also stops and keeps the recording. **Discard** throws the
 recording away. A thin red outline marks the region while it records; it stays out of the video
 and lets clicks through.
@@ -70,9 +88,11 @@ sudo dnf install pipewire-gstreamer gstreamer1-plugins-good gstreamer1-plugins-b
 ### GNOME: the ShareZ Helper extension
 
 GNOME doesn't let normal apps see which window is on top. Without help ShareZ guesses, and can
-highlight a window that is behind another one. The small ShareZ Helper shell extension in
-[`gnome-extension/`](gnome-extension/) tells it the real stacking order and exact window edges,
-and places the outline around a region being recorded. Copy it again after updating ShareZ:
+highlight a window that is behind another one, and has nowhere for a tray icon. The small ShareZ
+Helper shell extension in [`gnome-extension/`](gnome-extension/) tells it the real stacking order
+and exact window edges, places the outline around a region being recorded, and shows ShareZ's
+top-bar icon. `./install.sh` installs it for you, or copy it yourself (again after updating
+ShareZ):
 
 ```sh
 cp -r gnome-extension/sharez-helper@codicusmaximus.github.io ~/.local/share/gnome-shell/extensions/
@@ -98,6 +118,11 @@ sudo pacman -S gtk4 libadwaita gstreamer
 cargo run                      # the app
 cargo run -- --list-windows    # print the windows ShareZ can snap to, as JSON
 ```
+
+To use ShareZ day to day, install it for your user with `./install.sh`. It builds a release, puts
+`sharez` in `~/.local/bin`, adds it to your app launcher, and on GNOME installs the helper
+extension. The launcher entry matters on Wayland: GNOME's shortcut dialog and notifications find
+apps by it.
 
 To build a Flatpak locally, see [`flatpak/`](flatpak/io.github.codicusmaximus.ShareZ.Devel.yml).
 How the code is organised is in [docs/architecture.md](docs/architecture.md).
