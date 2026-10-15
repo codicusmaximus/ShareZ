@@ -121,6 +121,12 @@ pulsesrc (default input)     ┴→ audiomixer → limiter → AAC or Opus ─�
   10 seconds is reported as possibly unplayable. When the desktop ends the share (the portal
   session's `Closed` signal, or an error from the video source), ShareZ saves just as if Stop had
   been pressed, pushing EOS into the video branch itself if the source can't.
+- **Countdown.** `Recorder::prepare` does everything that can fail or ask (the share dialog,
+  building the pipeline, opening the file) and leaves the pipeline paused; `begin` sets it
+  playing, so the first frame comes after it. In between, an optional click-through badge counts
+  3, 2, 1 in the middle of the region, placed the same way as the outline. Each number fades out
+  over its last quarter, and ShareZ waits a moment after closing the badge before `begin`, so no
+  trace of it is recorded.
 - **Outline.** A transparent, click-through window titled "ShareZ Recording Area" draws a red
   frame just outside the region. Apps can't place windows on Wayland, so the ShareZ Helper
   extension (`PlaceWindow`) does it on GNOME and a KWin script does it on KDE, keeping it above

@@ -54,35 +54,53 @@ pub async fn show(session: &Session, region: Rect) -> Option<Outline> {
         );
         let _ = cr.stroke();
     });
+    let window = overlay_window(TITLE, outer, &area);
+    let outline = Outline(window);
+    place(source, &outline.0, TITLE, outer, Some(RING))
+        .await
+        .then_some(outline)
+}
+
+/// A borderless, transparent, click-through window of ours, for drawing over the screen.
+pub fn overlay_window(title: &str, rect: Rect, child: &impl IsA<gtk::Widget>) -> gtk::Window {
     let window = gtk::Window::builder()
-        .title(TITLE)
+        .title(title)
         .decorated(false)
         .resizable(false)
         .can_focus(false)
-        .default_width(outer.width.ceil() as i32)
-        .default_height(outer.height.ceil() as i32)
-        .css_classes(["sharez-outline"])
-        .child(&area)
+        .default_width(rect.width.ceil() as i32)
+        .default_height(rect.height.ceil() as i32)
+        .css_classes(["sharez-overlay"])
+        .child(child)
         .build();
     transparent_background();
     window.connect_map(click_through);
     window.present();
-    let outline = Outline(window);
+    window
+}
 
+/// Has the desktop move `window`, titled `title`, to `rect` once it appears. False if it can't.
+pub async fn place(
+    source: sharez_windows::Source,
+    window: &gtk::Window,
+    title: &str,
+    rect: Rect,
+    ring: Option<u16>,
+) -> bool {
     for _ in 0..PLACE_ATTEMPTS {
         glib::timeout_future(Duration::from_millis(100)).await;
-        click_through(&outline.0);
-        match source.place(TITLE, outer, Some(RING)).await {
-            Ok(true) => return Some(outline),
+        click_through(window);
+        match source.place(title, rect, ring).await {
+            Ok(true) => return true,
             Ok(false) => {}
             Err(e) => {
-                eprintln!("Can't place the recording outline with {source:?}: {e}");
-                return None;
+                eprintln!("Can't place {title} with {source:?}: {e}");
+                return false;
             }
         }
     }
-    eprintln!("The recording outline window never appeared to {source:?}.");
-    None
+    eprintln!("{title} never appeared to {source:?}.");
+    false
 }
 
 /// An empty input region: every click goes to the window underneath.
@@ -98,7 +116,7 @@ fn transparent_background() {
         return;
     }
     let css = gtk::CssProvider::new();
-    css.load_from_string("window.sharez-outline { background: none; box-shadow: none; }");
+    css.load_from_string("window.sharez-overlay { background: none; box-shadow: none; }");
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
