@@ -104,9 +104,11 @@ KDE Plasma and X11 need nothing extra.
 
 ## Troubleshooting
 
-**"Your desktop didn't let ShareZ take a screenshot."** On Wayland, the desktop asks once whether
-ShareZ may take screenshots, and remembers the answer. If it was Deny, or the question never
-appeared, every capture fails after that. To allow ShareZ again, run:
+**ShareZ asks for permission to take screenshots.** On Wayland the desktop asks once whether
+ShareZ may take screenshots, and GNOME only asks while ShareZ's window has focus. So the first
+time, ShareZ opens its window with an **Allow…** button: press it and allow ShareZ in the dialog
+that follows. If you chose Deny, the desktop remembers that, and ShareZ says so. To allow it
+again, run:
 
 ```sh
 gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \

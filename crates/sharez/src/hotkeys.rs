@@ -180,6 +180,36 @@ impl Trigger {
     }
 }
 
+/// A desktop's description of a trigger, for people. GNOME says `Press <Control>Print`, in GTK
+/// accelerator syntax; that becomes `Ctrl+Print`. Anything else is shown as it is.
+pub fn readable(description: &str) -> String {
+    let mut rest = description.strip_prefix("Press ").unwrap_or(description);
+    if !rest.starts_with('<') {
+        return description.to_owned();
+    }
+    let mut parts = Vec::new();
+    while let Some(tail) = rest.strip_prefix('<') {
+        let Some((name, after)) = tail.split_once('>') else {
+            return description.to_owned();
+        };
+        parts.push(match name.to_ascii_lowercase().as_str() {
+            "control" | "ctrl" | "primary" => "Ctrl",
+            "shift" => "Shift",
+            "alt" | "mod1" => "Alt",
+            "super" | "mod4" => "Super",
+            "meta" => "Meta",
+            "hyper" => "Hyper",
+            _ => return description.to_owned(),
+        });
+        rest = after;
+    }
+    if rest.is_empty() {
+        return description.to_owned();
+    }
+    parts.push(rest);
+    parts.join("+")
+}
+
 /// The shortcuts while they are bound. Dropping it unbinds them.
 pub enum Shortcuts {
     Portal {
@@ -215,7 +245,7 @@ impl Shortcuts {
             Self::Portal { bound, .. } => bound
                 .borrow()
                 .iter()
-                .filter_map(|s| Some((Hotkey::from_id(s.id())?, s.trigger_description().into())))
+                .filter_map(|s| Some((Hotkey::from_id(s.id())?, readable(s.trigger_description()))))
                 .collect(),
             Self::X11(grabs) => grabs.labels(),
         }
@@ -359,6 +389,13 @@ mod tests {
         assert!(Trigger::parse("HYPER+Print").is_none());
         assert!(Trigger::parse("CTRL+").is_none());
         assert!(Trigger::parse("").is_none());
+    }
+
+    #[test]
+    fn gnome_descriptions_become_labels() {
+        assert_eq!(readable("Press <Control>Print"), "Ctrl+Print");
+        assert_eq!(readable("Press <Shift><Control>Print"), "Shift+Ctrl+Print");
+        assert_eq!(readable("Meta+Shift+R"), "Meta+Shift+R");
     }
 
     #[test]

@@ -5,6 +5,7 @@ mod hotkeys;
 mod outline;
 mod output;
 mod overlay;
+mod permissions;
 mod settings;
 mod tray;
 mod x11keys;
@@ -127,6 +128,8 @@ struct Ui {
     app: adw::Application,
     window: adw::ApplicationWindow,
     toasts: adw::ToastOverlay,
+    /// Asks for the desktop's permission to take screenshots, when it hasn't been given.
+    banner: adw::Banner,
     page: adw::StatusPage,
     capture: gtk::Button,
     record: gtk::Button,
@@ -199,7 +202,9 @@ fn shortcuts_group() -> (
     let shortcut_rows: Vec<_> = Hotkey::ALL
         .into_iter()
         .map(|h| {
+            // Desktops describe keys like `<Control>Print`, which isn't markup.
             let row = adw::ActionRow::builder()
+                .use_markup(false)
                 .title(h.title())
                 .subtitle("Setting up…")
                 .build();
@@ -277,8 +282,14 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         .description("Screen capture for Linux. This is an early development build.")
         .child(&content)
         .build();
+    let banner = adw::Banner::builder()
+        .title("ShareZ needs your permission to take screenshots")
+        .button_label("Allow…")
+        .revealed(false)
+        .build();
     let view = adw::ToolbarView::new();
     view.add_top_bar(&adw::HeaderBar::new());
+    view.add_top_bar(&banner);
     view.set_content(Some(&page));
     let toasts = adw::ToastOverlay::new();
     toasts.set_child(Some(&view));
@@ -308,6 +319,7 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         app: app.clone(),
         window,
         toasts,
+        banner,
         page,
         capture,
         record,
@@ -402,6 +414,13 @@ fn connect(ui: &Rc<Ui>) {
     ui.desktop_audio.connect_active_notify(move |_| save());
     ui.microphone.connect_active_notify(move |_| save2());
 
+    ui.banner.connect_button_clicked(glib::clone!(
+        #[weak]
+        ui,
+        move |_| {
+            glib::spawn_future_local(async move { allow_screenshots(&ui).await });
+        }
+    ));
     ui.change_shortcuts.connect_clicked(glib::clone!(
         #[weak]
         ui,
@@ -439,6 +458,12 @@ async fn start_services(ui: Rc<Ui>) {
         && let Err(e) = hotkeys::answered(ashpd::register_host_app(id)).await
     {
         eprintln!("Could not register with the desktop portal: {e}");
+    }
+    if permissions::applies() {
+        let state = permissions::screenshots().await;
+        if state != permissions::Screenshots::Allowed {
+            ui.ask_for_screenshots(state);
+        }
     }
     let Some(session) = Session::detect() else {
         return;
@@ -600,6 +625,24 @@ impl Ui {
         );
     }
 
+    /// Shows the window with the permission banner. GNOME only asks the user while ShareZ has
+    /// focus, so the question has to start from a click in this window.
+    fn ask_for_screenshots(&self, state: permissions::Screenshots) {
+        if state == permissions::Screenshots::Denied {
+            self.banner.set_title(
+                "Screenshots are turned off for ShareZ. See Troubleshooting in the README to \
+                 turn them back on.",
+            );
+            self.banner.set_button_label(None);
+        } else {
+            self.banner
+                .set_title("ShareZ needs your permission to take screenshots");
+            self.banner.set_button_label(Some("Allow…"));
+        }
+        self.banner.set_revealed(true);
+        self.window.present();
+    }
+
     /// The window's toast if it is showing, otherwise a notification.
     fn tell_saved(&self, title: &str, path: PathBuf, shown: bool) {
         if shown {
@@ -688,13 +731,14 @@ async fn select_region(ui: &Ui, copy: bool) -> Result<Option<Picked>, String> {
         list_windows_for(&session),
         Elements::snapshot(),
     );
-    let frame = frame.map_err(|e| match e {
-        sharez_capture::Error::Denied => "Your desktop didn't let ShareZ take a screenshot. \
-            If it asked and you chose Deny, it remembers that: see Troubleshooting in the \
-            README to allow ShareZ again."
-            .to_owned(),
-        e => format!("Could not capture the screen: {e}"),
-    })?;
+    let frame = match frame {
+        Ok(frame) => frame,
+        Err(sharez_capture::Error::Denied) => {
+            ui.ask_for_screenshots(permissions::screenshots().await);
+            return Ok(None);
+        }
+        Err(e) => return Err(format!("Could not capture the screen: {e}")),
+    };
     let elements = elements
         .inspect_err(|e| eprintln!("No accessibility data, so no element snapping: {e}"))
         .ok();
@@ -716,6 +760,30 @@ async fn select_region(ui: &Ui, copy: bool) -> Result<Option<Picked>, String> {
         let _ = tx.try_send(picked);
     });
     Ok(rx.recv().await.ok().flatten())
+}
+
+/// Takes one screenshot from the focused window, so the desktop can ask the user's permission.
+async fn allow_screenshots(ui: &Rc<Ui>) {
+    let Some(session) = Session::detect() else {
+        return;
+    };
+    match sharez_capture::Backend::for_session(&session)
+        .freeze()
+        .await
+    {
+        Ok(_) => {
+            ui.banner.set_revealed(false);
+            ui.toasts.add_toast(adw::Toast::new(
+                "Screenshots allowed. The shortcuts and tray icon are ready.",
+            ));
+        }
+        Err(sharez_capture::Error::Denied) => {
+            ui.ask_for_screenshots(permissions::screenshots().await);
+        }
+        Err(e) => ui.toasts.add_toast(adw::Toast::new(&format!(
+            "Could not take a screenshot: {e}"
+        ))),
+    }
 }
 
 async fn capture_screen(ui: &Rc<Ui>) {
