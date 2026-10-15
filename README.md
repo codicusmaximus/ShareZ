@@ -68,7 +68,8 @@ it at 30 fps until you press **Stop Recording** or the record shortcut again (an
 window minimises itself while recording; the tray icon and the notification can stop it too). Stopping the share from the desktop, such as
 GNOME's stop button in the top bar, also stops and keeps the recording. **Discard** throws the
 recording away. A thin red outline marks the region while it records; it stays out of the video
-and lets clicks through.
+and lets clicks through. The finished video is copied, and clicking its notification shows it
+selected in your file manager, ready to drag wherever it needs to go.
 
 Choose **Desktop Audio** (what you hear), **Microphone**, or both under *Recording Audio*. With
 both, they are mixed into one track, and a limiter turns loud moments down so the mix never clips.

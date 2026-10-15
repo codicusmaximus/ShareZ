@@ -25,31 +25,85 @@ fn name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// "Saved … and copied it", with a button that opens the file.
-pub fn saved_toast(path: PathBuf) -> adw::Toast {
+/// What clicking a "saved" message does first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reveal {
+    /// Open the file in its default app (screenshots).
+    Open,
+    /// Show it selected in the file manager, ready to drag somewhere (recordings).
+    InFolder,
+}
+
+impl Reveal {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Open => "Open",
+            Self::InFolder => "Show in Folder",
+        }
+    }
+
+    fn action(self) -> &'static str {
+        match self {
+            Self::Open => "app.open-file",
+            Self::InFolder => "app.show-file",
+        }
+    }
+
+    fn other(self) -> Self {
+        match self {
+            Self::Open => Self::InFolder,
+            Self::InFolder => Self::Open,
+        }
+    }
+
+    pub fn run(self, path: &std::path::Path) {
+        match self {
+            Self::Open => open(path),
+            Self::InFolder => show_in_folder(path),
+        }
+    }
+}
+
+/// "Saved … and copied it", with a button that does `reveal`.
+pub fn saved_toast(path: PathBuf, reveal: Reveal) -> adw::Toast {
     let toast = adw::Toast::builder()
         .title(format!("Saved {} and copied it", name(&path)))
-        .button_label("Open")
+        .button_label(reveal.label())
         .build();
-    toast.connect_button_clicked(move |_| open(&path));
+    toast.connect_button_clicked(move |_| reveal.run(&path));
     toast
 }
 
-/// The same news as a desktop notification, for when the window is hidden. Clicking it opens the
-/// file.
-pub fn saved_notification(title: &str, path: &std::path::Path) -> gio::Notification {
+/// The same news as a desktop notification, for when the window is hidden. Clicking it does
+/// `reveal`; a button does the other.
+pub fn saved_notification(
+    title: &str,
+    path: &std::path::Path,
+    reveal: Reveal,
+) -> gio::Notification {
     let n = gio::Notification::new(title);
     n.set_body(Some(&format!("Saved {}", name(path))));
-    n.set_default_action_and_target_value(
-        "app.open-file",
-        Some(&path.to_string_lossy().to_variant()),
-    );
+    let target = path.to_string_lossy().to_variant();
+    n.set_default_action_and_target_value(reveal.action(), Some(&target));
+    let other = reveal.other();
+    n.add_button_with_target_value(other.label(), other.action(), Some(&target));
     n
 }
 
 /// Opens a file in its default app.
 pub fn open(path: &std::path::Path) {
     gtk::FileLauncher::new(Some(&gio::File::for_path(path))).launch(
+        None::<&gtk::Window>,
+        None::<&gio::Cancellable>,
+        |_| {},
+    );
+}
+
+/// Opens the file's folder in the file manager with the file selected (through
+/// `org.freedesktop.FileManager1`, which Files, Dolphin and most others answer), or just the folder
+/// where that isn't available.
+pub fn show_in_folder(path: &std::path::Path) {
+    gtk::FileLauncher::new(Some(&gio::File::for_path(path))).open_containing_folder(
         None::<&gtk::Window>,
         None::<&gio::Cancellable>,
         |_| {},
