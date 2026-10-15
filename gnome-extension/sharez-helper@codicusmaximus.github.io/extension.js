@@ -1,5 +1,6 @@
-// ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first.
-// Mutter gives no window positions or stacking order to normal Wayland clients.
+// ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first, and
+// places ShareZ's recording outline with PlaceWindow. Mutter gives normal Wayland clients neither
+// window positions nor stacking order, nor a way to position their own windows.
 
 import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
@@ -12,6 +13,14 @@ const IFACE = `
   <interface name="io.github.codicusmaximus.ShareZ.ShellHelper">
     <method name="GetWindows">
       <arg type="s" direction="out" name="json"/>
+    </method>
+    <method name="PlaceWindow">
+      <arg type="s" direction="in" name="title"/>
+      <arg type="i" direction="in" name="x"/>
+      <arg type="i" direction="in" name="y"/>
+      <arg type="i" direction="in" name="width"/>
+      <arg type="i" direction="in" name="height"/>
+      <arg type="b" direction="out" name="placed"/>
     </method>
   </interface>
 </node>`;
@@ -60,5 +69,24 @@ export default class ShareZHelperExtension extends Extension {
                 client: rect(w.frame_rect_to_client_rect(frame)),
             };
         }));
+    }
+
+    // Moves the named window (one of ShareZ's own) to an exact spot, keeps it above other windows
+    // on every workspace, and hands focus back to whatever had it.
+    PlaceWindow(title, x, y, width, height) {
+        const windows = global.get_window_actors().map(a => a.meta_window);
+        const win = windows.find(w => w.get_title() === title);
+        if (!win)
+            return false;
+        const hadFocus = global.display.focus_window === win;
+        win.move_resize_frame(false, x, y, width, height);
+        win.make_above();
+        win.stick();
+        if (hadFocus) {
+            const others = global.display.sort_windows_by_stacking(windows.filter(w =>
+                w !== win && !w.minimized && w.get_window_type() === Meta.WindowType.NORMAL));
+            others.at(-1)?.activate(global.get_current_time());
+        }
+        return true;
     }
 }

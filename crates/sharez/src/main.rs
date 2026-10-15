@@ -1,5 +1,6 @@
 //! The ShareZ application.
 
+mod outline;
 mod output;
 mod overlay;
 mod settings;
@@ -394,7 +395,9 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
     // Out of the way but one click from Stop. The notification has a Stop button too.
     ui.window.minimize();
     ui.window.set_visible(true);
+    let outline = outline::show(&session, selection.logical).await;
     let result = recorder.run(rx).await;
+    drop(outline);
     ui.set_recording(None);
     ui.window.present();
     match result.map_err(|e| e.to_string())? {

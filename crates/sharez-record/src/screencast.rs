@@ -10,6 +10,7 @@ use ashpd::desktop::{
     },
 };
 use ashpd::enumflags2::BitFlags;
+use futures_util::StreamExt;
 use gstreamer::glib;
 use sharez_core::Rect;
 
@@ -26,6 +27,17 @@ pub(crate) struct Cast {
 }
 
 impl Cast {
+    /// Resolves when the desktop ends the share (GNOME's "Stop sharing", say).
+    pub async fn closed(&self) {
+        match self.session.receive_closed().await {
+            Ok(mut signals) => {
+                signals.next().await;
+            }
+            // Without the signal, rely on the video source failing instead.
+            Err(_) => std::future::pending().await,
+        }
+    }
+
     pub async fn close(self) {
         let _ = self.session.close().await;
     }

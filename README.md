@@ -47,11 +47,15 @@ the first time it runs. Apps started before that may need a restart to show thei
 
 Press **Record Region** and pick the region the same way as for a screenshot. ShareZ then records
 it at 30 fps until you press **Stop Recording** (the ShareZ window minimises itself while
-recording; the notification has a Stop button too). **Discard** throws the recording away.
+recording; the notification has a Stop button too). Stopping the share from the desktop, such as
+GNOME's stop button in the top bar, also stops and keeps the recording. **Discard** throws the
+recording away. A thin red outline marks the region while it records; it stays out of the video
+and lets clicks through.
 
 Choose **Desktop Audio** (what you hear), **Microphone**, or both under *Recording Audio*. With
-both, they are mixed into one track. If your voice is distorted, turn the input volume down in
-your sound settings; the spike found laptop mics clipping at their default level.
+both, they are mixed into one track, and a limiter turns loud moments down so the mix never clips.
+If your voice is distorted before it reaches ShareZ, turn the input volume down in your sound
+settings; the spike found laptop mics clipping at their default level.
 
 On Wayland the desktop asks which screen to share the first time you record. ShareZ remembers the
 answer, so later recordings start straight away.
@@ -67,7 +71,8 @@ sudo dnf install pipewire-gstreamer gstreamer1-plugins-good gstreamer1-plugins-b
 
 GNOME doesn't let normal apps see which window is on top. Without help ShareZ guesses, and can
 highlight a window that is behind another one. The small ShareZ Helper shell extension in
-[`gnome-extension/`](gnome-extension/) tells it the real stacking order and exact window edges:
+[`gnome-extension/`](gnome-extension/) tells it the real stacking order and exact window edges,
+and places the outline around a region being recorded. Copy it again after updating ShareZ:
 
 ```sh
 cp -r gnome-extension/sharez-helper@codicusmaximus.github.io ~/.local/share/gnome-shell/extensions/

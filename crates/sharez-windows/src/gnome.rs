@@ -39,6 +39,32 @@ struct HelperWindow {
     client: [f64; 4],
 }
 
+/// Asks the helper extension to move a window of ours to `rect` and keep it above the others.
+pub async fn place(title: &str, rect: Rect) -> Result<bool> {
+    let conn = Connection::session().await?;
+    let [x, y, w, h] = px(rect);
+    call(
+        &conn,
+        HELPER,
+        HELPER_PATH,
+        HELPER,
+        "PlaceWindow",
+        &(title, x, y, w, h),
+    )
+    .await
+}
+
+/// A logical rectangle as whole pixels, rounded outwards.
+pub(crate) fn px(r: Rect) -> [i32; 4] {
+    let (x, y) = (r.x.floor(), r.y.floor());
+    [
+        x as i32,
+        y as i32,
+        (r.right().ceil() - x) as i32,
+        (r.bottom().ceil() - y) as i32,
+    ]
+}
+
 async fn from_extension() -> Result<Vec<Window>> {
     let conn = Connection::session().await?;
     let json: String = call(&conn, HELPER, HELPER_PATH, HELPER, "GetWindows", &()).await?;

@@ -86,7 +86,7 @@ method, `GetWindows`, returning the windows on the active workspace from Mutter,
 ```
 pipewiresrc | ximagesrc → videocrop → videorate → I420 → H.264 or VP8 ┐
 pulsesrc (@DEFAULT_MONITOR@) ┐                                         ├→ mp4mux | webmmux → file
-pulsesrc (default input)     ┴→ audiomixer → AAC or Opus ──────────────┘
+pulsesrc (default input)     ┴→ audiomixer → limiter → AAC or Opus ────┘
 ```
 
 - **Region.** The overlay hands back the region in logical coordinates. On Wayland the crop is
@@ -97,11 +97,21 @@ pulsesrc (default input)     ┴→ audiomixer → AAC or Opus ─────�
   then `vp8enc`. H.264 goes in MP4 with AAC when an AAC encoder is installed, Opus otherwise; VP8
   goes in WebM with Opus. Bitrate-controlled encoders get about 0.12 bits per pixel per frame.
 - **Audio** comes through PipeWire's PulseAudio interface. Desktop audio and the microphone are
-  mixed into one stereo track, since one track is what players and sharing sites expect.
+  mixed into one stereo track, since one track is what players and sharing sites expect. The mix
+  stays 32-bit float, where it can go over full scale without distorting, until a peak limiter
+  (a pad probe on `identity name=limiter`) brings it under −1 dBFS: the gain drops at once when a
+  sample would go over and recovers over about 0.2 s. A single track goes through it too.
 - **Portal session.** The ScreenCast restore token is saved in
   `~/.local/state/sharez/screencast-restore-token`, so the share dialog appears only once.
 - **Stopping** sends EOS so the muxer writes its index; a recording that doesn't finish within
-  10 seconds is reported as possibly unplayable.
+  10 seconds is reported as possibly unplayable. When the desktop ends the share (the portal
+  session's `Closed` signal, or an error from the video source), ShareZ saves just as if Stop had
+  been pressed, pushing EOS into the video branch itself if the source can't.
+- **Outline.** A transparent, click-through window titled "ShareZ Recording Area" draws a red
+  frame just outside the region. Apps can't place windows on Wayland, so the ShareZ Helper
+  extension (`PlaceWindow`) does it on GNOME and a KWin script does it on KDE, keeping it above
+  other windows on every workspace. On X11 it is placed with EWMH and shaped to a ring with XShape,
+  so it works without a compositor. Without the GNOME extension there is no outline.
 
 While recording, the main window minimises itself and shows a timer with Stop and Discard, and a
 notification offers Stop.
@@ -112,5 +122,5 @@ notification offers Stop.
   window and assumes the screen starts at 0,0. It will become one overlay per monitor using each
   monitor's `Mapping`.
 - Moving the cursor with arrow keys, as ShareX does: Wayland doesn't let apps warp the pointer.
-- Recording extras: a border around the region while recording, a global hotkey to stop, a
-  microphone level meter and gain, and a start countdown.
+- Recording extras: a global hotkey to stop, a microphone level meter and gain, and a start
+  countdown.

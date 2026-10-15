@@ -91,6 +91,20 @@ impl Source {
 
     /// Lists windows, topmost first where the source knows the stacking order (everywhere except
     /// GNOME without the helper extension).
+    /// Moves one of ShareZ's own windows, found by title, to `rect` (logical) and keeps it above
+    /// other windows. Wayland apps can't position their windows themselves. `Ok(false)` if the
+    /// window wasn't found yet.
+    ///
+    /// `ring` is for a window that is only a frame: on X11, which may have no compositor to make
+    /// the rest transparent, the window is cut down to a frame that many pixels wide.
+    pub async fn place(self, title: &str, rect: Rect, ring: Option<u16>) -> Result<bool> {
+        match self {
+            Self::Kwin => kwin::place(title, rect).await,
+            Self::GnomeShell => gnome::place(title, rect).await,
+            Self::Ewmh => ewmh::place(title, rect, ring),
+        }
+    }
+
     pub async fn windows(self) -> Result<Vec<Window>> {
         match self {
             Self::Kwin => kwin::windows().await,

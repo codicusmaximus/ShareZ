@@ -162,3 +162,91 @@ pub fn windows() -> Result<Vec<Window>> {
     }
     Ok(out)
 }
+
+/// Moves a window of ours to `rect` and asks the window manager to keep it above the others, on
+/// every desktop and out of the task bar. With `ring`, the window is cut down to a frame that
+/// wide, so what is inside shows through even without a compositor.
+pub fn place(title: &str, rect: Rect, ring: Option<u16>) -> Result<bool> {
+    use x11rb::protocol::{
+        shape::{self, ConnectionExt as _},
+        xproto::{ClientMessageEvent, ClipOrdering, ConfigureWindowAux, EventMask, Rectangle},
+    };
+
+    let (conn, screen_num) = x11rb::connect(None).map_err(x11_err)?;
+    let root = conn.setup().roots[screen_num].root;
+    let (net_wm_name, utf8) = (atom(&conn, "_NET_WM_NAME")?, atom(&conn, "UTF8_STRING")?);
+    let clients = prop32(
+        &conn,
+        root,
+        atom(&conn, "_NET_CLIENT_LIST")?,
+        AtomEnum::WINDOW,
+    );
+    let Some(&win) = clients
+        .iter()
+        .find(|&&w| prop_string(&conn, w, net_wm_name, utf8) == title)
+    else {
+        return Ok(false);
+    };
+    let [x, y, w, h] = crate::gnome::px(rect);
+    conn.configure_window(
+        win,
+        &ConfigureWindowAux::new()
+            .x(x)
+            .y(y)
+            .width(w.max(1) as u32)
+            .height(h.max(1) as u32),
+    )
+    .map_err(x11_err)?;
+    if let Some(ring) = ring {
+        let (w, h) = (w.max(1) as u16, h.max(1) as u16);
+        let line = ring.min(w / 2).min(h / 2);
+        let rect = |x, y, width, height| Rectangle {
+            x,
+            y,
+            width,
+            height,
+        };
+        let frame = [
+            rect(0, 0, w, line),
+            rect(0, (h - line) as i16, w, line),
+            rect(0, line as i16, line, h - 2 * line),
+            rect((w - line) as i16, line as i16, line, h - 2 * line),
+        ];
+        for kind in [shape::SK::BOUNDING, shape::SK::INPUT] {
+            conn.shape_rectangles(
+                shape::SO::SET,
+                kind,
+                ClipOrdering::UNSORTED,
+                win,
+                0,
+                0,
+                &frame,
+            )
+            .map_err(x11_err)?
+            .check()
+            .map_err(x11_err)?;
+        }
+    }
+    // _NET_WM_STATE: action 1 adds the two states named.
+    let state = atom(&conn, "_NET_WM_STATE")?;
+    for pair in [
+        ["_NET_WM_STATE_ABOVE", "_NET_WM_STATE_STICKY"],
+        ["_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_STATE_SKIP_PAGER"],
+    ] {
+        let event = ClientMessageEvent::new(
+            32,
+            win,
+            state,
+            [1, atom(&conn, pair[0])?, atom(&conn, pair[1])?, 1, 0],
+        );
+        conn.send_event(
+            false,
+            root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event,
+        )
+        .map_err(x11_err)?;
+    }
+    conn.flush().map_err(x11_err)?;
+    Ok(true)
+}

@@ -1,4 +1,5 @@
-//! KDE Plasma: a KWin script reads the window stack and calls back into ShareZ over D-Bus.
+//! KDE Plasma: KWin scripts read the window stack (or place a window of ours) and call back into
+//! ShareZ over D-Bus.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -57,17 +58,51 @@ impl Sink {
 
 /// KWin reads the script from disk. Under Flatpak only `$XDG_RUNTIME_DIR/app/$FLATPAK_ID` is
 /// shared with the host, at the same path.
-fn script_path() -> PathBuf {
+fn script_path(file: &str) -> PathBuf {
     let runtime =
         std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
     match std::env::var_os("FLATPAK_ID") {
         Some(id) => runtime.join("app").join(id),
         None => runtime,
     }
-    .join("sharez-kwin-windows.js")
+    .join(file)
+}
+
+/// Moves a window of ours to `rect`, keeps it above the others on every desktop and out of the
+/// task bar and switcher.
+pub async fn place(title: &str, rect: Rect) -> Result<bool> {
+    let [x, y, w, h] = crate::gnome::px(rect);
+    let title = serde_json::to_string(title).map_err(|e| Error::BadData("KWin", e.to_string()))?;
+    let script = format!(
+        r#"
+let placed = false;
+for (const w of workspace.stackingOrder) {{
+    if (w.caption !== {title}) continue;
+    w.frameGeometry = {{x: {x}, y: {y}, width: {w}, height: {h}}};
+    w.keepAbove = true;
+    w.onAllDesktops = true;
+    w.skipTaskbar = true;
+    w.skipSwitcher = true;
+    w.skipPager = true;
+    placed = true;
+}}
+callDBus("{BUS_NAME}", "/", "{BUS_NAME}", "Windows", JSON.stringify(placed));
+"#
+    );
+    let reply = run(&script, "sharez-kwin-place.js").await?;
+    Ok(reply == "true")
 }
 
 pub async fn windows() -> Result<Vec<Window>> {
+    let json = run(SCRIPT, "sharez-kwin-windows.js").await?;
+    let list: Vec<ScriptWindow> =
+        serde_json::from_str(&json).map_err(|e| Error::BadData("KWin", e.to_string()))?;
+    // KWin lists bottom to top.
+    Ok(list.into_iter().rev().map(Window::from).collect())
+}
+
+/// Runs a KWin script that calls back with one string, and returns that string.
+async fn run(script: &str, file: &str) -> Result<String> {
     let (tx, rx) = async_channel::bounded(1);
     let _server = zbus::connection::Builder::session()?
         .name(BUS_NAME)?
@@ -75,16 +110,11 @@ pub async fn windows() -> Result<Vec<Window>> {
         .build()
         .await?;
 
-    let path = script_path();
-    std::fs::write(&path, SCRIPT)?;
+    let path = script_path(file);
+    std::fs::write(&path, script)?;
     let result = run_script(&path, &rx).await;
     let _ = std::fs::remove_file(&path);
-
-    let json = result?;
-    let list: Vec<ScriptWindow> =
-        serde_json::from_str(&json).map_err(|e| Error::BadData("KWin", e.to_string()))?;
-    // KWin lists bottom to top.
-    Ok(list.into_iter().rev().map(Window::from).collect())
+    result
 }
 
 async fn run_script(
