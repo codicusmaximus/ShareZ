@@ -104,19 +104,31 @@ impl AudioIn {
 /// The name of the element whose output the limiter works on.
 pub(crate) const LIMITER: &str = "limiter";
 
+/// The queue in front of the video encoder. When the encoder can't keep up (a busy, full-screen
+/// video), it drops the oldest frame rather than holding up the source, so the video stays in
+/// step with real time and never falls behind the sound.
+const VIDEO_QUEUE: &str =
+    "queue leaky=downstream max-size-buffers=2 max-size-bytes=0 max-size-time=0";
+
+/// The queue between the sound encoder and the muxer. The muxer takes sound only as far as the
+/// video has got, and a full queue here would stall the sound source, which then throws away
+/// what it hears (heard as garbled, skipping sound). Encoded sound is small, so it gets room for
+/// a long wait.
+const AUDIO_QUEUE: &str = "queue max-size-buffers=0 max-size-bytes=0 max-size-time=30000000000";
+
 /// The pipeline. Sound tracks are mixed into one, since one track is what players and sharing
 /// sites expect. The sound is floating point until it has been through the limiter, so a loud mix
 /// is turned down rather than clipped.
 pub(crate) fn describe(video: &VideoIn, audio: &[AudioIn], format: Format, fps: u32) -> String {
     let mut parts = vec![format!(
         "{} ! videocrop name=crop ! videorate ! videoconvert n-threads=0 ! \
-         video/x-raw,format=I420,framerate={fps}/1 ! queue ! {} ! queue ! mux.",
+         video/x-raw,format=I420,framerate={fps}/1 ! {VIDEO_QUEUE} ! {} ! queue ! mux.",
         video.source(),
         format.video_encoder()
     )];
     let limit = format!(
         "audio/x-raw,format=F32LE,rate={RATE},channels={CHANNELS},layout=interleaved ! \
-         identity name={LIMITER} ! audioconvert ! {} ! queue ! mux.",
+         identity name={LIMITER} ! audioconvert ! {} ! {AUDIO_QUEUE} ! mux.",
         format.audio_encoder()
     );
     match audio {
@@ -224,5 +236,19 @@ mod tests {
         ));
         assert!(d.contains("audiomixer name=mix ! audio/x-raw,format=F32LE"));
         assert!(d.contains("identity name=limiter"));
+    }
+
+    #[test]
+    fn a_slow_encoder_drops_frames_instead_of_starving_the_sound() {
+        crate::init().unwrap();
+        let format = Format::detect().unwrap();
+        let d = describe(
+            &VideoIn::PipeWire { fd: 3, node: 42 },
+            &[DESKTOP],
+            format,
+            30,
+        );
+        assert!(d.contains(&format!("framerate=30/1 ! {VIDEO_QUEUE} ! ")));
+        assert!(d.contains(&format!("! {AUDIO_QUEUE} ! mux.")));
     }
 }
