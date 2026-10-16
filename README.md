@@ -170,7 +170,7 @@ extension. The launcher entry matters on Wayland: GNOME's shortcut dialog and no
 apps by it.
 
 To build the release packages (.deb, .rpm, Arch), install [nfpm](https://nfpm.goreleaser.com)
-and run `packaging/build.sh` on Ubuntu 24.04; they land in `dist/`. Pushing a `v*` tag builds
+and run `packaging/build.sh` on Ubuntu 24.04; they land in `dist/`. Pushing a `v*` tag, or running the Packages workflow on main from the Actions tab, builds
 them in CI, installs each on a clean Debian, Ubuntu, Fedora and Arch, and publishes the release.
 
 To build a Flatpak locally, see [`flatpak/`](flatpak/io.github.codicusmaximus.ShareZ.Devel.yml).

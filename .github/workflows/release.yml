@@ -1,7 +1,8 @@
 name: Packages
 
 # Builds the .deb, .rpm and Arch packages, installs each one on a clean copy of its distribution,
-# and on a v* tag publishes them as a GitHub release with packaging/RELEASE_NOTES.md.
+# and publishes them as a GitHub release with packaging/RELEASE_NOTES.md: on a v* tag, or when run
+# by hand on main (Actions > Packages > Run workflow), which tags main with the Cargo.toml version.
 on:
   push:
     tags: ["v*"]
@@ -72,7 +73,9 @@ jobs:
 
   release:
     name: Publish the release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     needs: install
     runs-on: ubuntu-24.04
     permissions:
@@ -87,6 +90,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "ShareZ ${GITHUB_REF_NAME#v}" \
+          tag=$GITHUB_REF_NAME
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            tag="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          fi
+          gh release create "$tag" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "ShareZ ${tag#v}" \
             --notes-file packaging/RELEASE_NOTES.md
