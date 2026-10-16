@@ -21,6 +21,14 @@ impl Tray {
     /// Shows the icon. Its menu sends action names to `actions`. `None` if there is nowhere to
     /// show it.
     pub async fn start(session: &Session, actions: async_channel::Sender<Action>) -> Option<Self> {
+        if session.desktop == Desktop::Gnome {
+            match sharez_windows::enable_helper().await {
+                // Give the shell a moment to load it.
+                Ok(true) => glib::timeout_future(std::time::Duration::from_millis(500)).await,
+                Ok(false) => {}
+                Err(e) => eprintln!("Could not check the ShareZ Helper extension: {e}"),
+            }
+        }
         if session.desktop == Desktop::Gnome
             && sharez_windows::helper_features()
                 .await
