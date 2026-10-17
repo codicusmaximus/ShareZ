@@ -1,5 +1,9 @@
 ShareZ captures screenshots and recordings of regions, windows and elements inside windows on Linux, with global shortcuts and a tray icon. It works on Wayland (GNOME and KDE Plasma) and X11.
 
+## What's new
+
+- Recordings of busy, fast-moving video no longer end with garbled, skipping sound. When the computer can't encode every frame, ShareZ now drops a frame instead, so the sound stays whole and in sync.
+
 ## Install
 
 Download the one file for your distribution from the list below, then install it with your package manager from the folder you saved it in. The package manager installs everything ShareZ needs; there is nothing to build.
