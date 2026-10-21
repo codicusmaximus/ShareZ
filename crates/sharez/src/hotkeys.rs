@@ -79,10 +79,18 @@ pub enum After {
     Save,
     /// Show a popup that asks.
     Ask,
+    /// Open the annotator, then the popup.
+    Annotate,
 }
 
 impl After {
-    pub const ALL: [After; 4] = [After::SaveAndCopy, After::Copy, After::Save, After::Ask];
+    pub const ALL: [After; 5] = [
+        After::SaveAndCopy,
+        After::Copy,
+        After::Save,
+        After::Ask,
+        After::Annotate,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -90,6 +98,7 @@ impl After {
             After::Copy => "copy",
             After::Save => "save",
             After::Ask => "ask",
+            After::Annotate => "annotate",
         }
     }
 
@@ -103,6 +112,7 @@ impl After {
             After::Copy => "Copy Only",
             After::Save => "Save Only",
             After::Ask => "Ask What to Do",
+            After::Annotate => "Open in Annotator",
         }
     }
 

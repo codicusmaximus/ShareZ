@@ -1,6 +1,7 @@
 //! The ShareZ application. It keeps running in the background once started, reachable from its
 //! top-bar or tray icon and its global shortcuts.
 
+mod annotate;
 mod countdown;
 mod hotkey_settings;
 mod hotkeys;
@@ -36,7 +37,7 @@ pub const APP_ID: &str = "io.github.codicusmaximus.ShareZ";
 const FPS: u32 = 30;
 const RECORDING_NOTIFICATION: &str = "recording";
 const USAGE: &str = "Usage: sharez [--background | --capture | --capture-screen | --record |
-              --hotkey ID | --list-windows]
+              --hotkey ID | --annotate FILE | --list-windows]
 
   --background      Start without opening the window (used when starting at login)
   --capture         Capture a region, in the running ShareZ if there is one
@@ -44,6 +45,7 @@ const USAGE: &str = "Usage: sharez [--background | --capture | --capture-screen 
   --record          Start recording a region, or stop the recording that is running
   --hotkey ID       Do what the hotkey with this id does (the ids are in
                     ~/.config/sharez/settings.ini), for the desktop's own shortcuts
+  --annotate FILE   Open an image in the annotator
   --list-windows    Print the windows ShareZ can see, as JSON";
 
 /// What this run of `sharez` was asked to do.
@@ -55,6 +57,8 @@ enum Launch {
     Action(&'static str),
     /// Run a hotkey's job, by id, then stay in the background.
     Hotkey(String),
+    /// Open an image file in the annotator.
+    Annotate(String),
 }
 
 impl Launch {
@@ -62,6 +66,7 @@ impl Launch {
         match self {
             Launch::Action(action) => app.activate_action(action, None),
             Launch::Hotkey(id) => app.activate_action("hotkey", Some(&id.to_variant())),
+            Launch::Annotate(path) => app.activate_action("annotate", Some(&path.to_variant())),
             Launch::Window | Launch::Background => {}
         }
     }
@@ -83,6 +88,15 @@ fn main() -> glib::ExitCode {
                 return glib::ExitCode::FAILURE;
             };
             Launch::Hotkey(id)
+        }
+        Some("--annotate") => {
+            let Some(path) = args.next() else {
+                eprintln!("--annotate needs an image file\n\n{USAGE}");
+                return glib::ExitCode::FAILURE;
+            };
+            // The running ShareZ may have another working folder.
+            let path = std::path::absolute(&path).unwrap_or_else(|_| path.into());
+            Launch::Annotate(path.to_string_lossy().into_owned())
         }
         Some("--help" | "-h") => {
             println!("{USAGE}");
@@ -458,6 +472,19 @@ fn add_actions(ui: &Rc<Ui>) {
     hotkey.connect_activate(move |_, id| {
         if let (Some(ui), Some(id)) = (weak.upgrade(), id.and_then(glib::Variant::str)) {
             run_hotkey(&ui, id);
+        }
+    });
+    // An image file in the annotator: `sharez --annotate`.
+    let annotate_file = gio::SimpleAction::new("annotate", Some(glib::VariantTy::STRING));
+    ui.app.add_action(&annotate_file);
+    let weak = Rc::downgrade(ui);
+    annotate_file.connect_activate(move |_, path| {
+        let (Some(ui), Some(path)) = (weak.upgrade(), path.and_then(glib::Variant::str)) else {
+            return;
+        };
+        match output::load_image(std::path::Path::new(path)) {
+            Ok(image) => annotate(&ui, image, ui.window.is_visible()),
+            Err(e) => ui.fail("Could Not Open the Image", &e),
         }
     });
     add(ui, "record", |ui| {
@@ -1040,6 +1067,7 @@ async fn screenshot(ui: &Rc<Ui>, capture: Capture, after: After) {
     };
     match after {
         After::Ask => ask(ui, image, shown),
+        After::Annotate => annotate(ui, image, shown),
         After::Copy => ui.tell_copied(shown),
         After::Save | After::SaveAndCopy => {
             keep(ui, &image, None, after.copies(), shown);
@@ -1100,7 +1128,23 @@ fn ask(ui: &Rc<Ui>, image: Frame, shown: bool) {
                     output::open(&path);
                 }
             }
+            popup::Choice::Annotate => annotate(&ui, image, shown),
             popup::Choice::Discard => {}
+        }
+    });
+}
+
+/// Opens the annotator on `image`. Finishing brings the popup back with the result, as ShareX
+/// carries on with its after-capture tasks; cancelling drops the screenshot.
+fn annotate(ui: &Rc<Ui>, image: Frame, shown: bool) {
+    let weak = Rc::downgrade(ui);
+    annotate::open(&ui.app, image, move |outcome| {
+        let Some(ui) = weak.upgrade() else { return };
+        match outcome {
+            annotate::Outcome::Apply(image) | annotate::Outcome::Continue(image) => {
+                ask(&ui, image, shown);
+            }
+            annotate::Outcome::Cancel => {}
         }
     });
 }

@@ -169,6 +169,28 @@ instance over D-Bus.
   (`GtkFileLauncher` asks `org.freedesktop.FileManager1.ShowItems`), ready to drag. A button on
   each notification does the other.
 
+## Annotator
+
+`annotate` is a port of ShareX's image editor (`ShareX.ScreenCaptureLib`'s `ShapeManager`, its
+shapes and `RegionCaptureForm` in task-editor mode), rewritten from the C# rather than copied: both
+are GPLv3.
+
+- `shapes` holds the shapes and tools, their ShareX defaults and the per-tool options, and the
+  geometry of drawing, moving and resizing them (`OnCreating`, `OnNodeUpdate` and so on).
+- `editor` is the input state machine with no GTK in it, so it is unit tested: which press picks up
+  which shape, undo mementos, step numbering, crop and the keys.
+- `render` draws with Cairo and Pango at 96 DPI so ShareX's point sizes come out the same; a half
+  pixel offset gives GDI+'s pixel centres, and dash patterns and arrow caps are in pen widths as in
+  GDI+. Effects (blur, pixelate, highlight, in `effects`) always go under drawings.
+- `mod.rs` is the window: header bar, toolbar (`sync_bar` shows only the settings a tool uses,
+  as ShareX's `UpdateMenu`), zoom and the outcome: apply, continue without annotations, or cancel.
+- `prefs` keeps the options in `~/.config/sharez/annotate.ini`; `icons` writes ShareZ's own
+  symbolic tool icons to the cache and adds them to the icon theme.
+
+Not ported yet: the cut-out tool; image, sticker and cursor shapes and pasting images; gradient
+text; Alt snap sizes; canvas resize, auto crop and image effects; upload and print; the magnify
+interpolation option; ShareX's animations.
+
 ## Not built yet
 
 - Multi-monitor overlay: the frozen frame covers all monitors, but the overlay is one full-screen
