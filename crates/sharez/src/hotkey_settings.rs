@@ -151,7 +151,11 @@ fn capture_subtitle(c: Capture) -> &'static str {
 
 fn after_subtitle(c: Capture, a: After) -> &'static str {
     if !c.is_screenshot() {
-        return "Recordings are saved and copied";
+        return if a.for_capture(c).copies() {
+            "Saved to Videos/ShareZ and copied as a file"
+        } else {
+            "Saved to Videos/ShareZ, not copied"
+        };
     }
     match a {
         After::SaveAndCopy => "Saved to Pictures/ShareZ and copied",
@@ -177,6 +181,8 @@ struct Editor {
     name: adw::EntryRow,
     capture: adw::ComboRow,
     after: adw::ComboRow,
+    /// What the after-capture row lists, which depends on what the hotkey captures.
+    afters: Cell<&'static [After]>,
     keys: adw::ActionRow,
     key_slot: gtk::Box,
     delete: gtk::Button,
@@ -200,10 +206,11 @@ impl Editor {
             .model(&gtk::StringList::new(&Capture::ALL.map(Capture::title)))
             .selected(index(&Capture::ALL, hotkey.capture))
             .build();
+        let afters = hotkey.capture.afters();
         let after = adw::ComboRow::builder()
             .title("After Capture")
-            .model(&gtk::StringList::new(&After::ALL.map(After::title)))
-            .selected(index(&After::ALL, hotkey.after))
+            .model(&after_model(afters))
+            .selected(index(afters, hotkey.after.for_capture(hotkey.capture)))
             .build();
         let what = adw::PreferencesGroup::new();
         what.add(&name);
@@ -242,6 +249,7 @@ impl Editor {
             name,
             capture,
             after,
+            afters: Cell::new(afters),
             keys,
             key_slot,
             delete,
@@ -258,13 +266,21 @@ impl Editor {
 
     /// Copies the rows into the draft, and updates what depends on them.
     fn sync(&self) {
+        let capture = Capture::ALL[(self.capture.selected() as usize).min(Capture::ALL.len() - 1)];
+        let afters = capture.afters();
+        if afters != self.afters.get() {
+            // Changing the list runs this again, so nothing may be borrowed here.
+            let keep = self.draft.borrow().after.for_capture(capture);
+            self.afters.set(afters);
+            self.after.set_model(Some(&after_model(afters)));
+            self.after.set_selected(index(afters, keep));
+        }
         let mut d = self.draft.borrow_mut();
         self.name.text().trim().clone_into(&mut d.name);
-        d.capture = Capture::ALL[(self.capture.selected() as usize).min(Capture::ALL.len() - 1)];
-        d.after = After::ALL[(self.after.selected() as usize).min(After::ALL.len() - 1)];
+        d.capture = capture;
+        d.after = afters[(self.after.selected() as usize).min(afters.len() - 1)];
         self.capture.set_subtitle(capture_subtitle(d.capture));
         self.after.set_subtitle(after_subtitle(d.capture, d.after));
-        self.after.set_sensitive(d.capture.is_screenshot());
     }
 
     /// Shows the draft's key, and what clicking the row does.
@@ -322,6 +338,11 @@ impl Editor {
         self.recording.set(false);
         self.show_key();
     }
+}
+
+fn after_model(afters: &[After]) -> gtk::StringList {
+    let titles: Vec<&str> = afters.iter().map(|a| a.title()).collect();
+    gtk::StringList::new(&titles)
 }
 
 fn index<T: PartialEq + Copy>(all: &[T], value: T) -> u32 {
@@ -485,7 +506,11 @@ mod tests {
     fn recordings_say_what_happens_to_them() {
         assert_eq!(
             after_subtitle(Capture::Record, After::Ask),
-            "Recordings are saved and copied"
+            "Saved to Videos/ShareZ and copied as a file"
+        );
+        assert_eq!(
+            after_subtitle(Capture::Record, After::Save),
+            "Saved to Videos/ShareZ, not copied"
         );
         assert_ne!(
             after_subtitle(Capture::Region, After::Ask),

@@ -72,7 +72,8 @@ to add one. A hotkey can capture:
 - **Record Region**: start recording a region, or stop the recording.
 
 and then, for screenshots, **Save and Copy**, **Copy Only**, **Save Only**, **Open in Annotator**
-or **Ask What to Do**.
+or **Ask What to Do**. Recordings are always saved, then copied (**Save and Copy**) or not
+(**Save Only**).
 Asking shows a popup with the screenshot and these answers, each with a key:
 
 | Key | Does |
@@ -159,8 +160,10 @@ it at 30 fps until you press **Stop Recording** or the record shortcut again (an
 window minimises itself while recording; the tray icon and the notification can stop it too). Stopping the share from the desktop, such as
 GNOME's stop button in the top bar, also stops and keeps the recording. **Discard** throws the
 recording away. A thin red outline marks the region while it records; it stays out of the video
-and lets clicks through. The finished video is copied, and clicking its notification shows it
-selected in your file manager, ready to drag wherever it needs to go.
+and lets clicks through. The finished video is copied to the clipboard as a file, so pasting in
+Files, a chat app or a browser's upload box pastes the video itself (a hotkey set to **Save Only**
+skips that, and the notification's **Copy** button copies it later). Clicking the notification
+shows it selected in your file manager, ready to drag wherever it needs to go.
 
 Turn on **Countdown** to have a large 3, 2, 1 appear in the middle of the region first. Recording
 starts the moment the 1 disappears, so the countdown is never in the video. Its **Speed** goes
