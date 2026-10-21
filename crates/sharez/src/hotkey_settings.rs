@@ -158,6 +158,7 @@ fn after_subtitle(c: Capture, a: After) -> &'static str {
         After::Copy => "Copied, not saved",
         After::Save => "Saved, not copied",
         After::Ask => "A popup asks what to do",
+        After::Annotate => "Opens in the annotator, then asks",
     }
 }
 

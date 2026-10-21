@@ -71,12 +71,14 @@ to add one. A hotkey can capture:
 - **Last Region**: the region you picked last time, at once. The first time, you pick one.
 - **Record Region**: start recording a region, or stop the recording.
 
-and then, for screenshots, **Save and Copy**, **Copy Only**, **Save Only**, or **Ask What to Do**.
+and then, for screenshots, **Save and Copy**, **Copy Only**, **Save Only**, **Open in Annotator**
+or **Ask What to Do**.
 Asking shows a popup with the screenshot and these answers, each with a key:
 
 | Key | Does |
 |---|---|
 | Enter | Save and copy |
+| E | Annotate it, then ask again |
 | C | Copy to the clipboard |
 | S | Save to `~/Pictures/ShareZ` |
 | A | Save as…, wherever you choose |
@@ -111,6 +113,44 @@ Capture works like ShareX's region capture:
 
 Elements inside windows come from the accessibility tree, which ShareZ turns on for your session
 the first time it runs. Apps started before that may need a restart to show their elements.
+
+## Annotating
+
+The annotator is a port of ShareX's image editor, with its tools, keys and toolbar. Open it from
+the popup (**E**), from a hotkey set to **Open in Annotator**, or on any image with
+`sharez --annotate FILE`. When you're done, the popup asks what to do with the result.
+
+| Key | Tool |
+|---|---|
+| M | Select and move |
+| R, E | Rectangle, ellipse |
+| F, L, A | Freehand, line, arrow (freehand arrow is on the toolbar) |
+| O, T, S | Text (outline), text (background), speech balloon |
+| I | Step: numbered markers that count up, and renumber when one is deleted |
+| B, P, H | Blur, pixelate, highlight |
+| C | Crop |
+| Numpad 1–9 | Rectangle, ellipse, freehand, line, arrow, text, step, blur, pixelate |
+
+Magnify and smart eraser are on the toolbar. Each tool's colours, sizes, shadow and the like are on
+the toolbar next to it, apply to the selected shape too, and are kept for next time.
+
+| Do this | To get |
+|---|---|
+| Shift while drawing | Lines at 45° steps, squares and circles; corners resize in proportion |
+| Ctrl while drawing or resizing | Move the shape instead |
+| Hold Ctrl | Draw over shapes instead of picking them up |
+| Double-click a text shape | Edit its text |
+| Arrows (Shift: 10 px) | Move the selected shape; with Ctrl or Alt, resize it |
+| Del, Shift+Del | Delete the selected shape, or all of them |
+| Home, End, Page Up, Page Down | Bring to front, send to back, forward, backward |
+| Ctrl+Z, Ctrl+Y | Undo, redo |
+| Ctrl+D, Ctrl+V | Duplicate at the pointer, paste text as a text shape |
+| Ctrl+scroll, Ctrl+plus/minus | Zoom; Ctrl+0 for actual size, Ctrl+Alt+0 to fit |
+| Middle-drag | Pan |
+| Ctrl+S, Ctrl+Shift+S, Ctrl+C | Save, save as, copy |
+| Enter | Done: use the annotated image |
+| Space or right-click on nothing | Continue with the image without annotations (crops and rotations stay) |
+| Esc | Back to the select tool, then cancel |
 
 ## Recording a region
 
