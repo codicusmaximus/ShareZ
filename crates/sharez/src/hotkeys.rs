@@ -21,56 +21,182 @@ use futures_util::StreamExt;
 use gtk::{gdk, glib};
 use sharez_core::{DisplayServer, Session as Desktop};
 
-/// Something a shortcut does.
+/// What a hotkey captures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Hotkey {
-    Capture,
+pub enum Capture {
+    /// Pick a region, window or element in the overlay.
+    Region,
+    /// Everything on screen, straight away.
+    Screen,
+    /// The region picked last time, straight away (or a new one if there is none yet).
+    LastRegion,
+    /// Start recording a region, or stop the recording that is running.
     Record,
 }
 
-impl Hotkey {
-    pub const ALL: [Hotkey; 2] = [Hotkey::Capture, Hotkey::Record];
+impl Capture {
+    pub const ALL: [Capture; 4] = [
+        Capture::Region,
+        Capture::Screen,
+        Capture::LastRegion,
+        Capture::Record,
+    ];
 
-    /// The id the portal stores it under; also the key in the settings file.
+    /// How the settings file spells it.
     pub fn id(self) -> &'static str {
         match self {
-            Hotkey::Capture => "capture-region",
-            Hotkey::Record => "record-region",
+            Capture::Region => "region",
+            Capture::Screen => "screen",
+            Capture::LastRegion => "last-region",
+            Capture::Record => "record",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|h| h.id() == id)
+        Self::ALL.into_iter().find(|c| c.id() == id)
     }
 
     pub fn title(self) -> &'static str {
         match self {
-            Hotkey::Capture => "Capture Region",
-            Hotkey::Record => "Record Region",
+            Capture::Region => "Region",
+            Capture::Screen => "Whole Screen",
+            Capture::LastRegion => "Last Region",
+            Capture::Record => "Record Region",
         }
     }
 
-    fn description(self) -> &'static str {
+    /// Whether it makes a screenshot, which an after-capture action then handles.
+    pub fn is_screenshot(self) -> bool {
+        self != Capture::Record
+    }
+}
+
+/// What happens to a screenshot once it is taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum After {
+    SaveAndCopy,
+    Copy,
+    Save,
+    /// Show a popup that asks.
+    Ask,
+}
+
+impl After {
+    pub const ALL: [After; 4] = [After::SaveAndCopy, After::Copy, After::Save, After::Ask];
+
+    pub fn id(self) -> &'static str {
         match self {
-            Hotkey::Capture => "Capture a region of the screen",
-            Hotkey::Record => "Start or stop recording a region of the screen",
+            After::SaveAndCopy => "save-and-copy",
+            After::Copy => "copy",
+            After::Save => "save",
+            After::Ask => "ask",
         }
     }
 
-    /// Ctrl+Print as in ShareX. ShareX records with Shift+Print, but GNOME and KDE use that for
-    /// their own screenshots.
-    pub fn default_trigger(self) -> &'static str {
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.id() == id)
+    }
+
+    pub fn title(self) -> &'static str {
         match self {
-            Hotkey::Capture => "CTRL+Print",
-            Hotkey::Record => "CTRL+SHIFT+Print",
+            After::SaveAndCopy => "Save and Copy",
+            After::Copy => "Copy Only",
+            After::Save => "Save Only",
+            After::Ask => "Ask What to Do",
         }
     }
 
-    /// The app action it runs.
-    pub fn action(self) -> &'static str {
-        match self {
-            Hotkey::Capture => "capture",
-            Hotkey::Record => "record",
+    pub fn copies(self) -> bool {
+        matches!(self, After::SaveAndCopy | After::Copy)
+    }
+}
+
+/// A shortcut the user set up: a key, what it captures and what happens to the capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hotkey {
+    /// Stable for the hotkey's life. The portal stores the desktop's key under it, so it never
+    /// changes when the hotkey is edited.
+    pub id: String,
+    pub name: String,
+    pub capture: Capture,
+    pub after: After,
+    /// In the shortcuts spec's form, or empty for none. On X11 these are the keys ShareZ grabs;
+    /// on Wayland only a suggestion for the desktop, which keeps the real ones.
+    pub keys: String,
+}
+
+impl Hotkey {
+    pub fn new(id: &str, name: &str, capture: Capture, after: After, keys: &str) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            capture,
+            after,
+            keys: keys.into(),
+        }
+    }
+
+    /// The hotkeys a new install starts with. Print and Ctrl+Print are ShareX's; ShareX records
+    /// with Shift+Print, but GNOME and KDE use that for their own screenshots. Super+Shift+S is
+    /// the key Windows' own snipping tool uses for "pick a region, then decide".
+    pub fn defaults() -> Vec<Self> {
+        vec![
+            Self::new(
+                "capture-screen",
+                "Capture Screen",
+                Capture::Screen,
+                After::SaveAndCopy,
+                "Print",
+            ),
+            Self::new(
+                "capture-region",
+                "Capture Region",
+                Capture::Region,
+                After::SaveAndCopy,
+                "CTRL+Print",
+            ),
+            Self::new(
+                "capture-region-ask",
+                "Capture Region and Ask",
+                Capture::Region,
+                After::Ask,
+                "SHIFT+LOGO+s",
+            ),
+            Self::new(
+                "record-region",
+                "Record Region",
+                Capture::Record,
+                After::SaveAndCopy,
+                "CTRL+SHIFT+Print",
+            ),
+        ]
+    }
+
+    /// A fresh hotkey with an id no other hotkey has had, so the desktop asks about its key.
+    pub fn fresh(existing: &[Hotkey]) -> Self {
+        let mut n = chrono::Local::now().timestamp_millis();
+        while existing.iter().any(|h| h.id == format!("hotkey-{n}")) {
+            n += 1;
+        }
+        let id = format!("hotkey-{n}");
+        Self::new(&id, "New Hotkey", Capture::Region, After::Ask, "")
+    }
+
+    /// "Region, then ask what to do", for the list of hotkeys.
+    pub fn summary(&self) -> String {
+        if self.capture.is_screenshot() {
+            format!("{} · {}", self.capture.title(), self.after.title())
+        } else {
+            self.capture.title().to_owned()
+        }
+    }
+
+    /// What the desktop shows next to the key in its own settings.
+    fn description(&self) -> String {
+        if self.name.trim().is_empty() {
+            self.summary()
+        } else {
+            self.name.clone()
         }
     }
 }
@@ -239,39 +365,54 @@ pub enum Shortcuts {
 }
 
 impl Shortcuts {
-    /// Binds the shortcuts and sends each press to `pressed`. `x11` is the keys from the
-    /// settings, used on X11 only. Also returns a sentence for each key that couldn't be bound.
-    /// `asking` runs when the desktop is about to ask the user to confirm the keys.
+    /// Binds `hotkeys` and sends the id of each one pressed to `pressed`. On X11 ShareZ grabs
+    /// their keys; on Wayland the desktop is asked, with their keys as suggestions. Also returns a
+    /// sentence for each key that couldn't be bound. `asking` runs when the desktop is about to
+    /// ask the user to confirm the keys.
     pub async fn bind(
         desktop: &Desktop,
-        x11: &[(Hotkey, String)],
-        pressed: async_channel::Sender<Hotkey>,
+        hotkeys: &[Hotkey],
+        pressed: async_channel::Sender<String>,
         asking: impl FnOnce(),
     ) -> Result<(Self, Vec<String>), String> {
         match desktop.display {
             DisplayServer::X11 => {
-                crate::x11keys::Grabs::start(x11, pressed).map(|(g, p)| (Self::X11(g), p))
+                let keys: Vec<(String, String)> = hotkeys
+                    .iter()
+                    .filter(|h| !h.keys.is_empty())
+                    .map(|h| (h.id.clone(), h.keys.clone()))
+                    .collect();
+                crate::x11keys::Grabs::start(&keys, pressed).map(|(g, p)| (Self::X11(g), p))
             }
-            DisplayServer::Wayland => portal(pressed, asking).await.map(|s| (s, Vec::new())),
+            DisplayServer::Wayland => portal(hotkeys, pressed, asking)
+                .await
+                .map(|s| (s, Vec::new())),
         }
     }
 
-    /// What each shortcut is bound to, for people. Empty when the desktop doesn't say.
-    pub fn labels(&self) -> Vec<(Hotkey, String)> {
+    /// What each hotkey (by id) is bound to, for people. Hotkeys the desktop doesn't mention
+    /// have no key.
+    pub fn labels(&self) -> Vec<(String, String)> {
         match self {
             Self::Portal { bound, .. } => bound
                 .borrow()
                 .iter()
-                .filter_map(|s| Some((Hotkey::from_id(s.id())?, readable(s.trigger_description()))))
+                .map(|s| (s.id().to_owned(), readable(s.trigger_description())))
+                .filter(|(_, label)| !label.is_empty())
                 .collect(),
             Self::X11(grabs) => grabs.labels(),
         }
     }
 
+    /// Whether the desktop, not ShareZ, decides the keys.
+    pub fn desktop_owns_keys(&self) -> bool {
+        matches!(self, Self::Portal { .. })
+    }
+
     /// The keys as GTK accelerators, for ShareZ's own windows. A desktop's global shortcuts don't
     /// fire while the app that bound them has focus (GNOME passes the key to it instead), so the
     /// window has to handle them itself. X11 grabs work everywhere and need none.
-    pub fn window_accels(&self) -> Vec<(Hotkey, String)> {
+    pub fn window_accels(&self) -> Vec<(String, String)> {
         match self {
             Self::Portal { .. } => self
                 .labels()
@@ -342,7 +483,8 @@ pub async fn answered<T>(
 }
 
 async fn portal(
-    pressed: async_channel::Sender<Hotkey>,
+    hotkeys: &[Hotkey],
+    pressed: async_channel::Sender<String>,
     asking: impl FnOnce(),
 ) -> Result<Shortcuts, String> {
     let (portal, session, listed) = answered(async {
@@ -353,9 +495,7 @@ async fn portal(
         let mut activated = portal.receive_activated().await?;
         glib::spawn_future_local(async move {
             while let Some(a) = activated.next().await {
-                if let Some(hotkey) = Hotkey::from_id(a.shortcut_id()) {
-                    let _ = pressed.send(hotkey).await;
-                }
+                let _ = pressed.send(a.shortcut_id().to_owned()).await;
             }
         });
         // The desktop remembers what the user chose, so only ask about shortcuts it doesn't know.
@@ -368,14 +508,19 @@ async fn portal(
         Ok((portal, session, listed))
     })
     .await?;
-    let known = |h: Hotkey| listed.iter().any(|s| s.id() == h.id());
-    let bound = if Hotkey::ALL.into_iter().all(known) {
+    let known = |h: &Hotkey| listed.iter().any(|s| s.id() == h.id);
+    let bound = if hotkeys.iter().all(known) {
         listed
     } else {
-        let new: Vec<NewShortcut> = Hotkey::ALL
-            .into_iter()
+        // All of them, not just the new ones: a session only has the shortcuts it binds.
+        let new: Vec<NewShortcut> = hotkeys
+            .iter()
             .map(|h| {
-                NewShortcut::new(h.id(), h.description()).preferred_trigger(h.default_trigger())
+                let shortcut = NewShortcut::new(h.id.as_str(), h.description());
+                match Trigger::parse(&h.keys) {
+                    Some(_) => shortcut.preferred_trigger(h.keys.as_str()),
+                    None => shortcut,
+                }
             })
             .collect();
         asking();
@@ -444,10 +589,46 @@ mod tests {
     }
 
     #[test]
-    fn defaults_parse() {
-        for h in Hotkey::ALL {
-            assert!(Trigger::parse(h.default_trigger()).is_some());
-            assert_eq!(Hotkey::from_id(h.id()), Some(h));
+    fn defaults_parse_and_ids_are_unique() {
+        let defaults = Hotkey::defaults();
+        for h in &defaults {
+            assert!(Trigger::parse(&h.keys).is_some(), "{}", h.keys);
+            assert_eq!(defaults.iter().filter(|o| o.id == h.id).count(), 1);
         }
+        let screen = &defaults[0];
+        assert_eq!(
+            (screen.capture, screen.after),
+            (Capture::Screen, After::SaveAndCopy)
+        );
+        assert_eq!(screen.keys, "Print");
+    }
+
+    #[test]
+    fn modes_round_trip() {
+        for c in Capture::ALL {
+            assert_eq!(Capture::from_id(c.id()), Some(c));
+        }
+        for a in After::ALL {
+            assert_eq!(After::from_id(a.id()), Some(a));
+        }
+        assert!(After::SaveAndCopy.copies() && After::Copy.copies());
+        assert!(!After::Ask.copies() && !After::Save.copies());
+    }
+
+    #[test]
+    fn fresh_ids_are_new() {
+        let mut hotkeys = Hotkey::defaults();
+        let a = Hotkey::fresh(&hotkeys);
+        hotkeys.push(a.clone());
+        let b = Hotkey::fresh(&hotkeys);
+        assert_ne!(a.id, b.id);
+        assert!(hotkeys.iter().all(|h| h.id != b.id));
+    }
+
+    #[test]
+    fn summaries() {
+        let d = Hotkey::defaults();
+        assert_eq!(d[2].summary(), "Region · Ask What to Do");
+        assert_eq!(d[3].summary(), "Record Region");
     }
 }

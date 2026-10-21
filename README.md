@@ -3,10 +3,11 @@
 A screen capture and recording tool for Linux, in the spirit of [ShareX](https://getsharex.com/).
 It targets Wayland (KDE Plasma, GNOME) and X11 as first-class platforms.
 
-> **Status:** early development. Region screenshots and region recordings work: press
-> **Ctrl+Print** or **Ctrl+Shift+Print** (or use the buttons, or ShareZ's top-bar icon), then drag a
-> region or click a window or an element inside one. Screenshots go to `~/Pictures/ShareZ`,
-> recordings to `~/Videos/ShareZ`, and either is always copied to the clipboard.
+> **Status:** early development. Screenshots and region recordings work: press **Print** for the
+> whole screen, **Ctrl+Print** for a region, **Super+Shift+S** for a region and a popup that asks
+> what to do with it, or **Ctrl+Shift+Print** to record (or use the buttons, or ShareZ's top-bar
+> icon). Screenshots go to `~/Pictures/ShareZ`, recordings to `~/Videos/ShareZ`, and both are
+> copied to the clipboard unless a hotkey says otherwise.
 
 ## Install
 
@@ -44,21 +45,55 @@ support and uninstalling.
 
 ## Running in the background
 
-Once started, ShareZ keeps running when you close its window, ready for its shortcuts. Its icon
+Once started, ShareZ keeps running when you close its window, ready for its hotkeys. Its icon
 sits in the top bar on GNOME (with the [ShareZ Helper extension](#gnome-the-sharez-helper-extension))
-and in the system tray on KDE Plasma and most X11 desktops, with Capture Region, Record Region,
-Open ShareZ and Quit. Turn on **Start at Login** in the window to have it ready after you log in.
-Ctrl+Q in the window, or Quit in the icon's menu, ends it.
+and in the system tray on KDE Plasma and most X11 desktops, with Capture Region, Capture Screen,
+Record Region, Open ShareZ and Quit. Turn on **Start at Login** in the window to have it ready
+after you log in. Ctrl+Q in the window, or Quit in the icon's menu, ends it.
 
-| Shortcut | Does |
+## Hotkeys
+
+Each hotkey is a key, something to capture, and what to do with the screenshot. ShareZ starts
+with these:
+
+| Hotkey | Captures | Then |
+|---|---|---|
+| Print | The whole screen | Saves and copies it |
+| Ctrl+Print | A region | Saves and copies it |
+| Super+Shift+S | A region | Asks what to do |
+| Ctrl+Shift+Print | Starts recording a region, or stops the recording | Saves and copies it |
+
+Change, add or delete them under **Hotkeys** in the ShareZ window: click one to edit it, or **+**
+to add one. A hotkey can capture:
+
+- **Region**: drag a region, or click a window or anything in it (see below).
+- **Whole Screen**: everything on screen, at once.
+- **Last Region**: the region you picked last time, at once. The first time, you pick one.
+- **Record Region**: start recording a region, or stop the recording.
+
+and then, for screenshots, **Save and Copy**, **Copy Only**, **Save Only**, or **Ask What to Do**.
+Asking shows a popup with the screenshot and these answers, each with a key:
+
+| Key | Does |
 |---|---|
-| Ctrl+Print | Capture a region |
-| Ctrl+Shift+Print | Start recording a region, or stop the recording |
+| Enter | Save and copy |
+| C | Copy to the clipboard |
+| S | Save to `~/Pictures/ShareZ` |
+| A | Save as…, wherever you choose |
+| O | Save and open it in your image viewer |
+| Esc | Discard |
 
-On Wayland the desktop owns global shortcuts: the first time ShareZ runs, GNOME or KDE asks you to
-confirm these keys (or pick others), and you can change them later in the desktop's keyboard
-settings. On X11, click a shortcut in the ShareZ window to change it. `sharez --capture` and
-`sharez --record` do the same from a script or your own shortcut.
+On Wayland the desktop owns global shortcuts: when ShareZ first runs, and after you add a hotkey,
+GNOME or KDE asks you to confirm the keys (ShareZ's are only suggestions), and you change them
+later in the desktop's keyboard settings. The keyboard button next to **+** opens those where the
+desktop has them. GNOME and KDE use Print for their own screenshot tools, so the desktop may not
+let ShareZ have it until you give their screenshot shortcut another key (on GNOME: Settings →
+Keyboard → View and Customize Shortcuts → Screenshots). On X11 ShareZ sets the keys itself: click
+**Keys** in a hotkey and press the new ones.
+
+`sharez --capture`, `sharez --capture-screen` and `sharez --record` do the same from a script or
+your own shortcut, and `sharez --hotkey ID` does what any hotkey does (the ids are in
+`~/.config/sharez/settings.ini`).
 
 ## Capturing a region
 
@@ -143,9 +178,9 @@ gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
   screenshot true screenshot io.github.codicusmaximus.ShareZ "['yes']"
 ```
 
-**Shortcuts say "Unavailable".** The desktop has no global shortcuts portal (GNOME before 48, for
-example). The window says why. `sharez --capture` and `sharez --record` still work from your
-desktop's own custom shortcuts.
+**Hotkeys say "Unavailable".** The desktop has no global shortcuts portal (GNOME before 48, for
+example). The window says why. `sharez --hotkey ID`, `sharez --capture` and `sharez --record`
+still work from your desktop's own custom shortcuts.
 
 ## Building
 

@@ -2,11 +2,13 @@
 //! top-bar or tray icon and its global shortcuts.
 
 mod countdown;
+mod hotkey_settings;
 mod hotkeys;
 mod outline;
 mod output;
 mod overlay;
 mod permissions;
+mod popup;
 mod settings;
 mod tray;
 mod x11keys;
@@ -20,11 +22,12 @@ use std::{
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use sharez_core::{Frame, Session};
+use sharez_core::{DisplayServer, Frame, PixelRect, Session};
 use sharez_record::{Audio, Format, Options, Recorder, Stop};
 use sharez_windows::{Elements, Target};
 
-use hotkeys::{Hotkey, Shortcuts, Trigger};
+use hotkey_settings::{HotkeyList, KeyState};
+use hotkeys::{After, Capture, Hotkey, Shortcuts};
 use overlay::Selection;
 use settings::Settings;
 use tray::Tray;
@@ -32,30 +35,55 @@ use tray::Tray;
 pub const APP_ID: &str = "io.github.codicusmaximus.ShareZ";
 const FPS: u32 = 30;
 const RECORDING_NOTIFICATION: &str = "recording";
-const USAGE: &str = "Usage: sharez [--background | --capture | --record | --list-windows]
+const USAGE: &str = "Usage: sharez [--background | --capture | --capture-screen | --record |
+              --hotkey ID | --list-windows]
 
-  --background    Start without opening the window (used when starting at login)
-  --capture       Capture a region, in the running ShareZ if there is one
-  --record        Start recording a region, or stop the recording that is running
-  --list-windows  Print the windows ShareZ can see, as JSON";
+  --background      Start without opening the window (used when starting at login)
+  --capture         Capture a region, in the running ShareZ if there is one
+  --capture-screen  Capture the whole screen
+  --record          Start recording a region, or stop the recording that is running
+  --hotkey ID       Do what the hotkey with this id does (the ids are in
+                    ~/.config/sharez/settings.ini), for the desktop's own shortcuts
+  --list-windows    Print the windows ShareZ can see, as JSON";
 
 /// What this run of `sharez` was asked to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Launch {
     Window,
     Background,
     /// Run an app action, then stay in the background.
     Action(&'static str),
+    /// Run a hotkey's job, by id, then stay in the background.
+    Hotkey(String),
+}
+
+impl Launch {
+    fn run(&self, app: &adw::Application) {
+        match self {
+            Launch::Action(action) => app.activate_action(action, None),
+            Launch::Hotkey(id) => app.activate_action("hotkey", Some(&id.to_variant())),
+            Launch::Window | Launch::Background => {}
+        }
+    }
 }
 
 fn main() -> glib::ExitCode {
-    let launch = match std::env::args().nth(1).as_deref() {
+    let mut args = std::env::args().skip(1);
+    let launch = match args.next().as_deref() {
         None => Launch::Window,
         // Diagnostics that need no UI.
         Some("--list-windows") => return list_windows(),
         Some("--background") => Launch::Background,
         Some("--capture") => Launch::Action("capture"),
+        Some("--capture-screen") => Launch::Action("capture-screen"),
         Some("--record") => Launch::Action("record"),
+        Some("--hotkey") => {
+            let Some(id) = args.next() else {
+                eprintln!("--hotkey needs a hotkey id\n\n{USAGE}");
+                return glib::ExitCode::FAILURE;
+            };
+            Launch::Hotkey(id)
+        }
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return glib::ExitCode::SUCCESS;
@@ -68,9 +96,10 @@ fn main() -> glib::ExitCode {
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_startup(startup);
     let first = Cell::new(true);
+    let window = launch == Launch::Window;
     app.connect_activate(move |app| {
         // A second `sharez` (from the launcher, say) always shows the window.
-        if !first.replace(false) || launch == Launch::Window {
+        if !first.replace(false) || window {
             app.activate_action("show", None);
         }
     });
@@ -81,19 +110,15 @@ fn main() -> glib::ExitCode {
         }
         // ShareZ is already running: hand it the job and leave.
         if app.is_remote() {
-            if let Launch::Action(action) = launch {
-                app.activate_action(action, None);
-            }
+            launch.run(&app);
             if let Some(bus) = app.dbus_connection() {
                 let _ = bus.flush_sync(None::<&gio::Cancellable>);
             }
             // Leave without tearing down a GApplication that never ran, which only warns.
             std::process::exit(0);
         }
-        if let Launch::Action(action) = launch {
-            let app = app.clone();
-            glib::idle_add_local_once(move || app.activate_action(action, None));
-        }
+        let app = app.clone();
+        glib::idle_add_local_once(move || launch.run(&app));
     }
     let argv0 = std::env::args().next().unwrap_or_else(|| "sharez".into());
     app.run_with_args(&[argv0])
@@ -133,15 +158,21 @@ struct Ui {
     banner: adw::Banner,
     page: adw::StatusPage,
     capture: gtk::Button,
+    capture_screen: gtk::Button,
     record: gtk::Button,
     discard: gtk::Button,
     desktop_audio: adw::SwitchRow,
     microphone: adw::SwitchRow,
     countdown: adw::ExpanderRow,
     countdown_speed: gtk::Scale,
-    shortcut_group: adw::PreferencesGroup,
-    shortcut_rows: Vec<(Hotkey, adw::ActionRow)>,
-    change_shortcuts: gtk::Button,
+    hotkeys: HotkeyList,
+    /// Where binding the hotkeys' keys has got to, and why it failed.
+    key_state: Cell<KeyState>,
+    key_error: RefCell<Option<String>>,
+    /// The hotkey actions given keys in ShareZ's own windows, to take back later.
+    window_accels: RefCell<Vec<String>>,
+    /// The last region a screenshot was taken of, for Last Region.
+    last_region: Cell<Option<LastRegion>>,
     settings: RefCell<Settings>,
     /// Set while recording; sending on it ends the recording.
     stop: RefCell<Option<async_channel::Sender<Stop>>>,
@@ -151,6 +182,18 @@ struct Ui {
     quit_after: Cell<bool>,
     tray: RefCell<Option<Tray>>,
     shortcuts: RefCell<Option<Rc<Shortcuts>>>,
+}
+
+/// A region picked earlier, and the size of the screen it was picked on.
+#[derive(Debug, Clone, Copy)]
+struct LastRegion {
+    pixels: PixelRect,
+    screen: (u32, u32),
+}
+
+/// Whether the desktop, not ShareZ, decides the hotkeys' keys (Wayland).
+fn desktop_owns_keys() -> bool {
+    Session::detect().is_some_and(|s| s.display == DisplayServer::Wayland)
 }
 
 /// Sets ShareZ up once per run. The window starts hidden; activation shows it.
@@ -238,37 +281,6 @@ fn countdown_rows(settings: &Settings) -> (adw::ExpanderRow, gtk::Scale) {
     (countdown, speed)
 }
 
-/// The shortcuts and their keys, with a button for the desktop's own settings where it has them.
-fn shortcuts_group() -> (
-    adw::PreferencesGroup,
-    gtk::Button,
-    Vec<(Hotkey, adw::ActionRow)>,
-) {
-    let shortcut_group = adw::PreferencesGroup::builder().title("Shortcuts").build();
-    let change_shortcuts = gtk::Button::builder()
-        .label("Change…")
-        .css_classes(["flat"])
-        .valign(gtk::Align::Center)
-        .visible(false)
-        .build();
-    shortcut_group.set_header_suffix(Some(&change_shortcuts));
-    let shortcut_rows: Vec<_> = Hotkey::ALL
-        .into_iter()
-        .map(|h| {
-            // Desktops describe keys like `<Control>Print`, which isn't markup.
-            let row = adw::ActionRow::builder()
-                .use_markup(false)
-                .title(h.title())
-                .subtitle("Setting up…")
-                .build();
-            shortcut_group.add(&row);
-            (h, row)
-        })
-        .collect();
-
-    (shortcut_group, change_shortcuts, shortcut_rows)
-}
-
 /// Running in the background, and starting at login.
 fn background_group() -> (adw::PreferencesGroup, adw::SwitchRow) {
     let background = adw::PreferencesGroup::builder()
@@ -284,7 +296,17 @@ fn background_group() -> (adw::PreferencesGroup, adw::SwitchRow) {
     (background, login)
 }
 
-fn build_window(app: &adw::Application) -> Rc<Ui> {
+/// The big buttons: Capture Region, Capture Screen, Record Region (Stop Recording while it
+/// records), and Discard while recording.
+struct Buttons {
+    row: gtk::Box,
+    capture: gtk::Button,
+    capture_screen: gtk::Button,
+    record: gtk::Button,
+    discard: gtk::Button,
+}
+
+fn buttons() -> Buttons {
     let pill = |label: &str, class: &str, action: &str| {
         gtk::Button::builder()
             .label(label)
@@ -293,6 +315,7 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
             .build()
     };
     let capture = pill("Capture Region", "suggested-action", "app.capture");
+    let capture_screen = pill("Capture Screen", "suggested-action", "app.capture-screen");
     let record = pill("Record Region", "suggested-action", "app.record");
     let discard = pill("Discard", "flat", "app.discard-recording");
     discard.set_visible(false);
@@ -301,30 +324,41 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         .halign(gtk::Align::Center)
         .build();
     buttons.append(&capture);
+    buttons.append(&capture_screen);
     buttons.append(&record);
     buttons.append(&discard);
+    Buttons {
+        row: buttons,
+        capture,
+        capture_screen,
+        record,
+        discard,
+    }
+}
 
+fn build_window(app: &adw::Application) -> Rc<Ui> {
+    let buttons = buttons();
     let settings = Settings::load();
     let recording = recording_group(&settings);
 
-    let (shortcut_group, change_shortcuts, shortcut_rows) = shortcuts_group();
+    let hotkeys = HotkeyList::new();
     let (background, login) = background_group();
 
     let groups = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(24)
         .build();
+    groups.append(&hotkeys.group);
     groups.append(&recording.group);
-    groups.append(&shortcut_group);
     groups.append(&background);
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(36)
         .build();
-    content.append(&buttons);
+    content.append(&buttons.row);
     content.append(
         &adw::Clamp::builder()
-            .maximum_size(400)
+            .maximum_size(480)
             .child(&groups)
             .build(),
     );
@@ -350,8 +384,8 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("ShareZ")
-        .default_width(520)
-        .default_height(760)
+        .default_width(600)
+        .default_height(820)
         .hide_on_close(true)
         .content(&toasts)
         .build();
@@ -374,16 +408,19 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         toasts,
         banner,
         page,
-        capture,
-        record,
-        discard,
+        capture: buttons.capture,
+        capture_screen: buttons.capture_screen,
+        record: buttons.record,
+        discard: buttons.discard,
         desktop_audio: recording.desktop_audio,
         microphone: recording.microphone,
         countdown: recording.countdown,
         countdown_speed: recording.countdown_speed,
-        shortcut_group,
-        shortcut_rows,
-        change_shortcuts,
+        hotkeys,
+        key_state: Cell::new(KeyState::SettingUp),
+        key_error: RefCell::new(None),
+        window_accels: RefCell::new(Vec::new()),
+        last_region: Cell::new(None),
         settings: RefCell::new(settings),
         stop: RefCell::new(None),
         busy: Cell::new(false),
@@ -404,7 +441,24 @@ fn add_actions(ui: &Rc<Ui>) {
     }
     add(ui, "capture", |ui| {
         let ui = ui.clone();
-        glib::spawn_future_local(async move { capture_screen(&ui).await });
+        glib::spawn_future_local(async move {
+            screenshot(&ui, Capture::Region, After::SaveAndCopy).await;
+        });
+    });
+    add(ui, "capture-screen", |ui| {
+        let ui = ui.clone();
+        glib::spawn_future_local(async move {
+            screenshot(&ui, Capture::Screen, After::SaveAndCopy).await;
+        });
+    });
+    // A hotkey, by id: from its keys, or `sharez --hotkey`.
+    let hotkey = gio::SimpleAction::new("hotkey", Some(glib::VariantTy::STRING));
+    ui.app.add_action(&hotkey);
+    let weak = Rc::downgrade(ui);
+    hotkey.connect_activate(move |_, id| {
+        if let (Some(ui), Some(id)) = (weak.upgrade(), id.and_then(glib::Variant::str)) {
+            run_hotkey(&ui, id);
+        }
     });
     add(ui, "record", |ui| {
         if ui.stop(Stop::Save) {
@@ -488,7 +542,22 @@ fn connect(ui: &Rc<Ui>) {
             glib::spawn_future_local(async move { allow_screenshots(&ui).await });
         }
     ));
-    ui.change_shortcuts.connect_clicked(glib::clone!(
+    ui.hotkeys.add.connect_clicked(glib::clone!(
+        #[weak]
+        ui,
+        move |_| {
+            let hotkey = Hotkey::fresh(&ui.settings.borrow().hotkeys);
+            let id = hotkey.id.clone();
+            {
+                let mut settings = ui.settings.borrow_mut();
+                settings.hotkeys.push(hotkey);
+                settings.save();
+            }
+            ui.refresh_hotkeys();
+            hotkey_settings::edit(&ui, &id, true);
+        }
+    ));
+    ui.hotkeys.desktop.connect_clicked(glib::clone!(
         #[weak]
         ui,
         move |_| {
@@ -504,18 +573,28 @@ fn connect(ui: &Rc<Ui>) {
             });
         }
     ));
-    if Session::detect().is_some_and(|s| s.display == sharez_core::DisplayServer::X11) {
-        for (hotkey, row) in &ui.shortcut_rows {
-            let hotkey = *hotkey;
-            row.set_activatable(true);
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-            row.connect_activated(glib::clone!(
-                #[weak]
-                ui,
-                move |_| change_shortcut(&ui, hotkey)
-            ));
-        }
+    ui.refresh_hotkeys();
+}
+
+/// Does what the hotkey `id` is set up to do.
+fn run_hotkey(ui: &Rc<Ui>, id: &str) {
+    let Some(hotkey) = ui
+        .settings
+        .borrow()
+        .hotkeys
+        .iter()
+        .find(|h| h.id == id)
+        .cloned()
+    else {
+        eprintln!("No hotkey {id}");
+        return;
+    };
+    if hotkey.capture == Capture::Record {
+        ui.app.activate_action("record", None);
+        return;
     }
+    let ui = ui.clone();
+    glib::spawn_future_local(async move { screenshot(&ui, hotkey.capture, hotkey.after).await });
 }
 
 /// The tray icon and the global shortcuts, which need a portal or two.
@@ -558,95 +637,47 @@ async fn bind_shortcuts(ui: &Rc<Ui>) {
     };
     // Let go of the old keys first, so the same key can be grabbed again on X11.
     ui.shortcuts.replace(None);
-    let (tx, rx) = async_channel::unbounded::<Hotkey>();
-    let keys = ui.settings.borrow().shortcuts.clone();
+    ui.key_state.set(KeyState::SettingUp);
+    ui.refresh_hotkeys();
+    let (tx, rx) = async_channel::unbounded::<String>();
+    let hotkeys = ui.settings.borrow().hotkeys.clone();
     let asking = glib::clone!(
         #[weak]
         ui,
         move || {
-            for (_, row) in &ui.shortcut_rows {
-                row.set_subtitle("Waiting for you to confirm it in the desktop's dialog…");
-            }
+            ui.key_state.set(KeyState::Confirming);
+            ui.refresh_hotkeys();
         }
     );
-    match Shortcuts::bind(&session, &keys, tx, asking).await {
+    match Shortcuts::bind(&session, &hotkeys, tx, asking).await {
         Ok((shortcuts, problems)) => {
             let shortcuts = Rc::new(shortcuts);
             shortcuts.on_change(glib::clone!(
                 #[weak]
                 ui,
-                move || ui.show_shortcuts(None)
+                move || ui.refresh_hotkeys()
             ));
-            ui.change_shortcuts
-                .set_visible(shortcuts.desktop_configures());
             ui.shortcuts.replace(Some(shortcuts));
             for problem in &problems {
                 eprintln!("Shortcut: {problem}");
                 ui.toasts.add_toast(adw::Toast::new(problem));
             }
-            ui.show_shortcuts(None);
+            ui.key_state.set(KeyState::Ready);
+            ui.key_error.replace(None);
         }
         Err(e) => {
             eprintln!("No global shortcuts: {e}");
-            ui.show_shortcuts(Some(&e));
+            ui.key_state.set(KeyState::Unavailable);
+            ui.key_error.replace(Some(e));
         }
     }
+    ui.refresh_hotkeys();
     let app = ui.app.clone();
     glib::spawn_future_local(async move {
-        while let Ok(hotkey) = rx.recv().await {
-            app.activate_action(hotkey.action(), None);
+        while let Ok(id) = rx.recv().await {
+            app.activate_action("hotkey", Some(&id.to_variant()));
         }
     });
-}
-
-/// Asks for a new key on X11, where ShareZ keeps the shortcuts itself.
-fn change_shortcut(ui: &Rc<Ui>, hotkey: Hotkey) {
-    // Let go of the keys while asking, or pressing one would run it instead of choosing it.
-    ui.shortcuts.replace(None);
-    let dialog = adw::AlertDialog::new(
-        Some(&format!("Shortcut for {}", hotkey.title())),
-        Some("Press the keys to use, with Ctrl, Alt, Shift or Super if you like."),
-    );
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("default", "Use Default");
-    let keys = gtk::EventControllerKey::new();
-    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    keys.connect_key_pressed(glib::clone!(
-        #[weak]
-        ui,
-        #[weak]
-        dialog,
-        #[upgrade_or]
-        glib::Propagation::Proceed,
-        move |_, key, _, state| {
-            if key == gtk::gdk::Key::Escape {
-                return glib::Propagation::Proceed;
-            }
-            let Some(trigger) = Trigger::from_press(key, state) else {
-                return glib::Propagation::Proceed;
-            };
-            ui.set_shortcut(hotkey, trigger.to_spec());
-            dialog.close();
-            glib::Propagation::Stop
-        }
-    ));
-    dialog.add_controller(keys);
-    dialog.connect_response(
-        Some("default"),
-        glib::clone!(
-            #[weak]
-            ui,
-            move |_, _| ui.set_shortcut(hotkey, hotkey.default_trigger().into())
-        ),
-    );
-    dialog.connect_closed(glib::clone!(
-        #[weak]
-        ui,
-        move |_| {
-            glib::spawn_future_local(async move { bind_shortcuts(&ui).await });
-        }
-    ));
-    dialog.present(Some(&ui.window));
 }
 
 impl Ui {
@@ -661,43 +692,50 @@ impl Ui {
         }
     }
 
-    fn set_shortcut(&self, hotkey: Hotkey, spec: String) {
-        let mut settings = self.settings.borrow_mut();
-        if let Some(entry) = settings.shortcuts.iter_mut().find(|(h, _)| *h == hotkey) {
-            entry.1 = spec;
+    /// Takes the hotkeys' keys away from ShareZ's own windows.
+    fn clear_window_accels(&self) {
+        for action in self.window_accels.borrow_mut().drain(..) {
+            self.app.set_accels_for_action(&action, &[]);
         }
-        settings.save();
     }
 
-    /// Shows each shortcut's keys, or why there are none.
-    fn show_shortcuts(&self, error: Option<&str>) {
-        let (labels, accels) = self
-            .shortcuts
-            .borrow()
+    /// Lists the hotkeys with their keys, or why there are none, and gives ShareZ's own windows
+    /// the keys too.
+    fn refresh_hotkeys(self: &Rc<Self>) {
+        let shortcuts = self.shortcuts.borrow().clone();
+        let (labels, accels) = shortcuts
             .as_ref()
             .map(|s| (s.labels(), s.window_accels()))
             .unwrap_or_default();
-        for hotkey in Hotkey::ALL {
-            let accel: Vec<&str> = accels
-                .iter()
-                .filter(|(h, _)| *h == hotkey)
-                .map(|(_, a)| a.as_str())
-                .collect();
-            self.app
-                .set_accels_for_action(&format!("app.{}", hotkey.action()), &accel);
+        self.clear_window_accels();
+        // The desktop still remembers hotkeys that were deleted; only the current ones count.
+        let current = |id: &str| self.settings.borrow().hotkeys.iter().any(|h| h.id == id);
+        for (id, accel) in accels.into_iter().filter(|(id, _)| current(id)) {
+            let action = format!("app.hotkey::{id}");
+            self.app.set_accels_for_action(&action, &[accel.as_str()]);
+            self.window_accels.borrow_mut().push(action);
         }
-        for (hotkey, row) in &self.shortcut_rows {
-            let label = labels.iter().find(|(h, _)| h == hotkey).map(|(_, l)| l);
-            row.set_subtitle(match (label, error) {
-                (Some(l), _) if !l.is_empty() => l,
-                (_, Some(_)) => "Unavailable",
-                _ => "Not set",
-            });
-        }
-        self.shortcut_group.set_description(
-            error
+        self.hotkeys
+            .desktop
+            .set_visible(shortcuts.is_some_and(|s| s.desktop_configures()));
+        self.hotkeys.group.set_description(
+            self.key_error
+                .borrow()
+                .as_ref()
                 .map(|e| format!("This desktop doesn't offer global shortcuts to apps ({e})."))
                 .as_deref(),
+        );
+        let weak = Rc::downgrade(self);
+        let edit: Rc<dyn Fn(String)> = Rc::new(move |id| {
+            if let Some(ui) = weak.upgrade() {
+                hotkey_settings::edit(&ui, &id, false);
+            }
+        });
+        self.hotkeys.show(
+            &self.settings.borrow().hotkeys,
+            &labels,
+            self.key_state.get(),
+            &edit,
         );
     }
 
@@ -720,13 +758,39 @@ impl Ui {
     }
 
     /// The window's toast if it is showing, otherwise a notification.
-    fn tell_saved(&self, title: &str, path: PathBuf, shown: bool, reveal: output::Reveal) {
+    fn tell_saved(
+        &self,
+        title: &str,
+        path: PathBuf,
+        copied: bool,
+        shown: bool,
+        reveal: output::Reveal,
+    ) {
         if shown {
-            self.toasts.add_toast(output::saved_toast(path, reveal));
+            self.toasts
+                .add_toast(output::saved_toast(path, copied, reveal));
         } else {
             self.app
                 .send_notification(None, &output::saved_notification(title, &path, reveal));
         }
+    }
+
+    /// News of a screenshot that was copied and not saved.
+    fn tell_copied(&self, shown: bool) {
+        if shown {
+            self.toasts.add_toast(adw::Toast::new("Screenshot copied"));
+        } else {
+            self.app
+                .send_notification(None, &output::copied_notification());
+        }
+    }
+
+    /// Shows the window with what went wrong.
+    fn fail(&self, title: &str, e: &str) {
+        self.window.present();
+        let dialog = adw::AlertDialog::new(Some(title), Some(e));
+        dialog.add_response("ok", "OK");
+        dialog.present(Some(&self.window));
     }
 
     /// Switches the window and the tray between their normal and recording states.
@@ -736,7 +800,8 @@ impl Ui {
         if let Some(tray) = self.tray.borrow().as_ref() {
             tray.set_recording(recording);
         }
-        self.capture.set_sensitive(!recording);
+        self.capture.set_visible(!recording);
+        self.capture_screen.set_visible(!recording);
         self.desktop_audio.set_sensitive(!recording);
         self.microphone.set_sensitive(!recording);
         self.countdown.set_sensitive(!recording);
@@ -791,30 +856,64 @@ impl Ui {
 /// A region the user picked.
 struct Picked {
     selection: Selection,
-    /// The region's pixels, already on the clipboard, when they were asked for.
+    /// The region's pixels, when they were asked for, already on the clipboard if that was too.
     image: Option<Result<Frame, String>>,
+    /// The size of the frozen screen it was picked on.
+    screen: (u32, u32),
 }
 
-/// Hides ShareZ, freezes the screen, lists windows and lets the user pick a region. With `copy`,
-/// the region goes on the clipboard as soon as it is picked. `None` if they cancelled.
-async fn select_region(ui: &Ui, copy: bool) -> Result<Option<Picked>, String> {
-    let session = Session::detect().ok_or("No display server found.")?;
+/// What a region is being picked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    Record,
+    Screenshot { copy: bool },
+}
+
+/// Hides ShareZ's window and gives the compositor a moment to remove it, or the tray menu that
+/// started this, before the screen is captured.
+async fn get_out_of_the_way(ui: &Ui) {
     ui.window.set_visible(false);
-    // Give the compositor a moment to remove our window, or the tray menu that started this,
-    // before the screen is captured.
     glib::timeout_future(Duration::from_millis(200)).await;
+}
+
+/// A frozen frame, or `None` if the desktop refused (the window then asks for permission).
+async fn frozen(
+    ui: &Ui,
+    frame: Result<Frame, sharez_capture::Error>,
+) -> Result<Option<Frame>, String> {
+    match frame {
+        Ok(frame) => Ok(Some(frame)),
+        Err(sharez_capture::Error::Denied) => {
+            ui.ask_for_screenshots(permissions::screenshots().await);
+            Ok(None)
+        }
+        Err(e) => Err(format!("Could not capture the screen: {e}")),
+    }
+}
+
+/// Hides ShareZ and freezes the whole screen.
+async fn freeze_screen(ui: &Ui) -> Result<Option<Frame>, String> {
+    let session = Session::detect().ok_or("No display server found.")?;
+    get_out_of_the_way(ui).await;
+    let frame = sharez_capture::Backend::for_session(&session)
+        .freeze()
+        .await;
+    frozen(ui, frame).await
+}
+
+/// Hides ShareZ, freezes the screen, lists windows and lets the user pick a region. For a
+/// screenshot that is copied, the region goes on the clipboard as soon as it is picked. `None` if
+/// they cancelled.
+async fn select_region(ui: &Ui, purpose: Purpose) -> Result<Option<Picked>, String> {
+    let session = Session::detect().ok_or("No display server found.")?;
+    get_out_of_the_way(ui).await;
     let (frame, windows, elements) = futures_util::join!(
         sharez_capture::Backend::for_session(&session).freeze(),
         list_windows_for(&session),
         Elements::snapshot(),
     );
-    let frame = match frame {
-        Ok(frame) => frame,
-        Err(sharez_capture::Error::Denied) => {
-            ui.ask_for_screenshots(permissions::screenshots().await);
-            return Ok(None);
-        }
-        Err(e) => return Err(format!("Could not capture the screen: {e}")),
+    let Some(frame) = frozen(ui, frame).await? else {
+        return Ok(None);
     };
     let elements = elements
         .inspect_err(|e| eprintln!("No accessibility data, so no element snapping: {e}"))
@@ -823,21 +922,29 @@ async fn select_region(ui: &Ui, copy: bool) -> Result<Option<Picked>, String> {
         Some(e) => e.targets(windows),
         None => windows.into_iter().map(Target::opaque).collect(),
     };
+    let screen = (frame.width, frame.height);
     let snapshot = overlay::Snapshot {
         frame: frame.clone(),
         targets,
         elements,
         // A recording films the screen, so it shows whatever covers the window anyway.
-        window_pixels: copy,
+        window_pixels: purpose != Purpose::Record,
     };
     let (tx, rx) = async_channel::bounded(1);
     overlay::show(Some(ui.app.upcast_ref()), snapshot, move |selection| {
         let picked = selection.map(|mut selection| Picked {
-            image: copy.then(|| match selection.window_image.take() {
-                Some(image) => Ok(output::copy_frame(image)),
-                None => output::copy_image(&frame, selection.pixels),
-            }),
+            image: match purpose {
+                Purpose::Record => None,
+                Purpose::Screenshot { copy } => {
+                    let image = match selection.window_image.take() {
+                        Some(image) => Ok(image),
+                        None => output::crop(&frame, selection.pixels),
+                    };
+                    Some(image.map(|i| if copy { output::copy_frame(i) } else { i }))
+                }
+            },
             selection,
+            screen,
         });
         let _ = tx.try_send(picked);
     });
@@ -868,32 +975,134 @@ async fn allow_screenshots(ui: &Rc<Ui>) {
     }
 }
 
-async fn capture_screen(ui: &Rc<Ui>) {
+/// Puts `image` on the clipboard behind a quick flash, which gives ShareZ the focus that Wayland
+/// asks for. For screenshots taken without the overlay.
+async fn flash_and_copy(ui: &Ui, image: Frame) -> Frame {
+    let (tx, rx) = async_channel::bounded(1);
+    overlay::flash(Some(ui.app.upcast_ref()), move || {
+        let _ = tx.try_send(output::copy_frame(image));
+    });
+    rx.recv().await.expect("the flash always finishes")
+}
+
+/// Takes a screenshot the way `capture` says, copied already when `copy`. `None` if the user
+/// cancelled.
+async fn take(ui: &Ui, capture: Capture, copy: bool) -> Result<Option<Frame>, String> {
+    let image = match capture {
+        Capture::Region | Capture::Record => {
+            let Some(picked) = select_region(ui, Purpose::Screenshot { copy }).await? else {
+                return Ok(None);
+            };
+            ui.last_region.set(Some(LastRegion {
+                pixels: picked.selection.pixels,
+                screen: picked.screen,
+            }));
+            return picked.image.transpose();
+        }
+        Capture::Screen => freeze_screen(ui).await?,
+        Capture::LastRegion => {
+            let Some(last) = ui.last_region.get() else {
+                // Nothing picked yet: pick one now, which later presses repeat.
+                return Box::pin(take(ui, Capture::Region, copy)).await;
+            };
+            let Some(frame) = freeze_screen(ui).await? else {
+                return Ok(None);
+            };
+            if (frame.width, frame.height) != last.screen {
+                // The screen changed size since; the old region may not fit.
+                ui.last_region.set(None);
+                return Box::pin(take(ui, Capture::Region, copy)).await;
+            }
+            Some(output::crop(&frame, last.pixels)?)
+        }
+    };
+    match image {
+        Some(image) if copy => Ok(Some(flash_and_copy(ui, image).await)),
+        image => Ok(image),
+    }
+}
+
+/// Takes a screenshot the way `capture` says and does what `after` says with it.
+async fn screenshot(ui: &Rc<Ui>, capture: Capture, after: After) {
     if ui.stop.borrow().is_some() || ui.busy.replace(true) {
         return;
     }
     let shown = ui.window.is_visible();
-    let picked = select_region(ui, true).await;
+    let taken = take(ui, capture, after.copies()).await;
     ui.busy.set(false);
     if shown {
         ui.window.present();
     }
-    let saved = match picked {
-        Ok(None | Some(Picked { image: None, .. })) => return,
-        Ok(Some(Picked {
-            image: Some(image), ..
-        })) => image.and_then(|image| output::save_image(&image)),
-        Err(e) => Err(e),
+    let image = match taken {
+        Ok(Some(image)) => image,
+        Ok(None) => return,
+        Err(e) => return ui.fail("Capture Failed", &e),
     };
-    match saved {
-        Ok(path) => ui.tell_saved("Screenshot copied", path, shown, output::Reveal::Open),
-        Err(e) => {
-            ui.window.present();
-            let dialog = adw::AlertDialog::new(Some("Capture Failed"), Some(&e));
-            dialog.add_response("ok", "OK");
-            dialog.present(Some(&ui.window));
+    match after {
+        After::Ask => ask(ui, image, shown),
+        After::Copy => ui.tell_copied(shown),
+        After::Save | After::SaveAndCopy => {
+            keep(ui, &image, None, after.copies(), shown);
         }
     }
+}
+
+/// Saves a screenshot, under Pictures/ShareZ or at `path`, and says so. `None` if it couldn't.
+fn keep(
+    ui: &Ui,
+    image: &Frame,
+    path: Option<PathBuf>,
+    copied: bool,
+    shown: bool,
+) -> Option<PathBuf> {
+    let saved = match path {
+        Some(path) => output::save_image_to(path, image),
+        None => output::save_image(image),
+    };
+    match saved {
+        Ok(path) => {
+            let title = if copied {
+                "Screenshot copied"
+            } else {
+                "Screenshot saved"
+            };
+            ui.tell_saved(title, path.clone(), copied, shown, output::Reveal::Open);
+            Some(path)
+        }
+        Err(e) => {
+            ui.fail("Could Not Save the Screenshot", &e);
+            None
+        }
+    }
+}
+
+/// Shows the popup that asks what to do with `image`, and does it.
+fn ask(ui: &Rc<Ui>, image: Frame, shown: bool) {
+    let texture = output::texture(&image);
+    let weak = Rc::downgrade(ui);
+    popup::ask(&ui.app, &texture.clone(), move |choice| {
+        let Some(ui) = weak.upgrade() else { return };
+        // Copy first, while the popup still has focus.
+        let copied = choice.copies();
+        if copied {
+            output::copy_texture(&texture);
+        }
+        match choice {
+            popup::Choice::Copy => ui.tell_copied(shown),
+            popup::Choice::Save | popup::Choice::SaveAndCopy => {
+                keep(&ui, &image, None, copied, shown);
+            }
+            popup::Choice::SaveAs(path) => {
+                keep(&ui, &image, Some(path), false, shown);
+            }
+            popup::Choice::SaveAndOpen => {
+                if let Some(path) = keep(&ui, &image, None, false, shown) {
+                    output::open(&path);
+                }
+            }
+            popup::Choice::Discard => {}
+        }
+    });
 }
 
 async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
@@ -903,7 +1112,7 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
         return Ok(());
     }
     let shown = ui.window.is_visible();
-    let picked = select_region(ui, false).await;
+    let picked = select_region(ui, Purpose::Record).await;
     ui.busy.set(false);
     let Some(picked) = picked? else {
         if shown {
@@ -978,7 +1187,13 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
         ui.window.present();
     }
     match saved {
-        Some(path) => ui.tell_saved("Recording copied", path, shown, output::Reveal::InFolder),
+        Some(path) => ui.tell_saved(
+            "Recording copied",
+            path,
+            true,
+            shown,
+            output::Reveal::InFolder,
+        ),
         None if shown => ui.toasts.add_toast(adw::Toast::new("Recording discarded")),
         None => {}
     }

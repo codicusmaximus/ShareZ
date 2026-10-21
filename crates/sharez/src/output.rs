@@ -1,5 +1,6 @@
 //! What happens to a capture: screenshots are saved as PNG under Pictures/ShareZ and recordings
-//! under Videos/ShareZ, and either is always copied to the clipboard.
+//! under Videos/ShareZ, and copied to the clipboard. A hotkey can skip either for screenshots, or
+//! ask (see `popup`).
 
 use std::{fs::File, io::BufWriter, path::PathBuf};
 
@@ -64,10 +65,11 @@ impl Reveal {
     }
 }
 
-/// "Saved … and copied it", with a button that does `reveal`.
-pub fn saved_toast(path: PathBuf, reveal: Reveal) -> adw::Toast {
+/// "Saved … and copied it", or just "Saved …", with a button that does `reveal`.
+pub fn saved_toast(path: PathBuf, copied: bool, reveal: Reveal) -> adw::Toast {
+    let and = if copied { " and copied it" } else { "" };
     let toast = adw::Toast::builder()
-        .title(format!("Saved {} and copied it", name(&path)))
+        .title(format!("Saved {}{and}", name(&path)))
         .button_label(reveal.label())
         .build();
     toast.connect_button_clicked(move |_| reveal.run(&path));
@@ -87,6 +89,13 @@ pub fn saved_notification(
     n.set_default_action_and_target_value(reveal.action(), Some(&target));
     let other = reveal.other();
     n.add_button_with_target_value(other.label(), other.action(), Some(&target));
+    n
+}
+
+/// News of a screenshot that was only copied.
+pub fn copied_notification() -> gio::Notification {
+    let n = gio::Notification::new("Screenshot copied");
+    n.set_body(Some("Paste it wherever it needs to go."));
     n
 }
 
@@ -133,33 +142,46 @@ fn write_png(path: &std::path::Path, image: &Frame) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Crops the region out of the frame and puts it on the clipboard. Call it while one of ShareZ's
-/// windows has focus (the overlay): on Wayland only the focused app may set the clipboard.
-pub fn copy_image(frame: &Frame, region: PixelRect) -> Result<Frame, String> {
-    let image = frame
+/// Crops the region out of the frame.
+pub fn crop(frame: &Frame, region: PixelRect) -> Result<Frame, String> {
+    frame
         .crop(region)
-        .ok_or("The selected region is outside the screen.")?;
-    Ok(copy_frame(image))
+        .ok_or_else(|| "The selected region is outside the screen.".into())
 }
 
-/// Puts an image on the clipboard, with the same caveat, and hands it back.
+/// Puts an image on the clipboard and hands it back. Call it while one of ShareZ's windows has
+/// focus (the overlay, the popup or the flash): on Wayland only the focused app may set the
+/// clipboard.
 pub fn copy_frame(image: Frame) -> Frame {
-    let texture = gdk::MemoryTexture::new(
-        image.width as i32,
-        image.height as i32,
-        gdk::MemoryFormat::R8g8b8a8,
-        &glib::Bytes::from(&image.data[..]),
-        image.width as usize * 4,
-    );
-    if let Some(display) = gdk::Display::default() {
-        display.clipboard().set_texture(&texture);
-    }
+    copy_texture(&texture(&image));
     image
+}
+
+/// The same, for an image already made into a texture.
+pub fn copy_texture(texture: &gdk::MemoryTexture) {
+    if let Some(display) = gdk::Display::default() {
+        display.clipboard().set_texture(texture);
+    }
 }
 
 /// Saves a screenshot as PNG under Pictures/ShareZ.
 pub fn save_image(image: &Frame) -> Result<PathBuf, String> {
-    let path = new_file(glib::UserDirectory::Pictures, "png")?;
+    save_image_to(new_file(glib::UserDirectory::Pictures, "png")?, image)
+}
+
+/// Saves a screenshot as PNG where the user chose.
+pub fn save_image_to(path: PathBuf, image: &Frame) -> Result<PathBuf, String> {
     write_png(&path, image).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// The image as a texture, for showing or copying it.
+pub fn texture(image: &Frame) -> gdk::MemoryTexture {
+    gdk::MemoryTexture::new(
+        image.width as i32,
+        image.height as i32,
+        gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from(&image.data[..]),
+        image.stride(),
+    )
 }
