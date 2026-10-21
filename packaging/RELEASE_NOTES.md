@@ -2,7 +2,11 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
-- Recordings of busy, fast-moving video no longer end with garbled, skipping sound. When the computer can't encode every frame, ShareZ now drops a frame instead, so the sound stays whole and in sync.
+- **An annotator, ported from ShareX's image editor.** Draw rectangles, ellipses, arrows, lines and freehand; add outlined or boxed text, speech balloons and numbered steps; blur, pixelate or highlight anything private; magnify, crop, rotate and flip. It has ShareX's 17 tools, their toolbar options and keys, plus undo and redo. Open it from the after-capture popup (**E**), from a hotkey set to **Open in Annotator**, or on any image with `sharez --annotate FILE`.
+- **Hotkeys you can edit.** Under **Hotkeys** in the ShareZ window, change, add or delete hotkeys. Each one picks what to capture (a region, the whole screen, the last region, or a recording) and what to do with a screenshot (save and copy, copy only, save only, open in the annotator, or ask).
+- **An after-capture popup** shows the screenshot and asks what to do with it: save and copy (Enter), annotate (E), copy (C), save (S), save as (A), save and open it (O), or discard (Esc).
+- **New default hotkeys:** Print captures the whole screen and Super+Shift+S captures a region, then asks. Ctrl+Print and Ctrl+Shift+Print still capture a region and record. If you're upgrading, your existing keys stay as they were.
+- **Capture Screen** is now in the top-bar and tray menu.
 
 ## Install
 
@@ -22,6 +26,8 @@ Then open **ShareZ** from your app launcher.
 
 **The first screenshot** asks whether ShareZ may take screenshots; allow it once and it won't ask again.
 
+**Upgrading from 0.1?** Install the new file the same way; your settings and hotkeys are kept. On GNOME, log out and back in once more so the top-bar menu picks up Capture Screen.
+
 ### Optional: MP4 recordings
 
 Out of the box ShareZ records WebM video, which plays everywhere modern. If you'd rather have MP4 (H.264), install these. Ubuntu and Debian already did if your package manager installs recommended packages (the default), and Fedora did on its own.
@@ -32,8 +38,16 @@ Out of the box ShareZ records WebM video, which plays everywhere modern. If you'
 
 ## Using it
 
-- **Ctrl+Print** captures a region; **Ctrl+Shift+Print** starts or stops recording. On GNOME and KDE the desktop asks you to confirm the shortcuts the first time.
+| Hotkey | Does |
+|---|---|
+| Print | Captures the whole screen |
+| Ctrl+Print | Captures a region |
+| Super+Shift+S | Captures a region, then asks what to do with it |
+| Ctrl+Shift+Print | Starts or stops recording a region |
+
+- On GNOME and KDE the desktop asks you to confirm the shortcuts the first time. Both desktops use Print for their own screenshot tool, so to give it to ShareZ, move theirs to another key first (on GNOME: Settings → Keyboard → View and Customize Shortcuts → Screenshots).
 - Hover a window or a button and click to capture just that, or drag to draw a region. Screenshots are copied to the clipboard and saved in Pictures/ShareZ; recordings go to Videos/ShareZ.
+- Change any of this under **Hotkeys** in the ShareZ window.
 - Closing the window keeps ShareZ running in the top bar or tray. Turn on **Start at Login** to have it ready every time.
 
 ## Uninstall
