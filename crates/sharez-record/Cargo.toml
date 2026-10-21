@@ -12,7 +12,7 @@ async-channel = "2.5.0"
 async-io = "2.6.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 gstreamer = "0.25"
-sharez-core = { version = "0.2.0", path = "../sharez-core" }
+sharez-core = { version = "0.2.1", path = "../sharez-core" }
 thiserror = "2.0.21"
 
 [lints]
