@@ -119,16 +119,29 @@ pub fn show_in_folder(path: &std::path::Path) {
     );
 }
 
-/// Copies a saved recording to the clipboard as a file, which chat apps and file managers paste.
-pub fn copy_video(path: &std::path::Path) {
+/// Copies a saved file to the clipboard as the file itself, so pasting it in a file manager, a
+/// chat app or a browser's upload box pastes the file. Call it while ShareZ has focus, as with
+/// `copy_frame`.
+pub fn copy_file(path: &std::path::Path) {
     let Some(display) = gdk::Display::default() else {
         return;
     };
-    let files = gdk::FileList::from_array(&[gio::File::for_path(path)]);
-    display
-        .clipboard()
-        .set_content(Some(&gdk::ContentProvider::for_value(&files.to_value())))
-        .ok();
+    let file = gio::File::for_path(path);
+    // GTK offers a file list as text/uri-list (browsers, Electron and Qt apps, Dolphin), the
+    // portal's file transfer (sandboxed apps) and the path as text. GNOME's Files and other GTK 3
+    // file managers want their own target on top.
+    let files = gdk::FileList::from_array(std::slice::from_ref(&file));
+    let gnome = glib::Bytes::from_owned(gnome_copied_files(&file.uri()).into_bytes());
+    let content = gdk::ContentProvider::new_union(&[
+        gdk::ContentProvider::for_value(&files.to_value()),
+        gdk::ContentProvider::for_bytes("x-special/gnome-copied-files", &gnome),
+    ]);
+    display.clipboard().set_content(Some(&content)).ok();
+}
+
+/// The `x-special/gnome-copied-files` form of a copied file: the operation, then its URI.
+fn gnome_copied_files(uri: &str) -> String {
+    format!("copy\n{uri}")
 }
 
 fn write_png(path: &std::path::Path, image: &Frame) -> Result<(), String> {
@@ -198,4 +211,17 @@ pub fn texture(image: &Frame) -> gdk::MemoryTexture {
         &glib::Bytes::from(&image.data[..]),
         image.stride(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copied_files_are_offered_the_way_gnome_files_pastes_them() {
+        assert_eq!(
+            gnome_copied_files("file:///home/me/Videos/ShareZ/a%20b.webm"),
+            "copy\nfile:///home/me/Videos/ShareZ/a%20b.webm"
+        );
+    }
 }

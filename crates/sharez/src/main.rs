@@ -487,25 +487,7 @@ fn add_actions(ui: &Rc<Ui>) {
             Err(e) => ui.fail("Could Not Open the Image", &e),
         }
     });
-    add(ui, "record", |ui| {
-        if ui.stop(Stop::Save) {
-            return;
-        }
-        let ui = ui.clone();
-        glib::spawn_future_local(async move {
-            if let Err(e) = record_region(&ui).await {
-                ui.set_recording(None);
-                if ui.quit_after.get() {
-                    ui.app.quit();
-                    return;
-                }
-                ui.window.present();
-                let dialog = adw::AlertDialog::new(Some("Recording Failed"), Some(&e));
-                dialog.add_response("ok", "OK");
-                dialog.present(Some(&ui.window));
-            }
-        });
-    });
+    add(ui, "record", |ui| record(ui, true));
     add(ui, "stop-recording", |ui| {
         ui.stop(Stop::Save);
     });
@@ -538,6 +520,41 @@ fn add_actions(ui: &Rc<Ui>) {
         });
         ui.app.add_action(&action);
     }
+    // A notification's "copy the file".
+    let copy_file = gio::SimpleAction::new("copy-file", Some(glib::VariantTy::STRING));
+    let weak = Rc::downgrade(ui);
+    copy_file.connect_activate(move |_, path| {
+        let (Some(ui), Some(path)) = (weak.upgrade(), path.and_then(glib::Variant::get::<String>))
+        else {
+            return;
+        };
+        glib::spawn_future_local(async move {
+            focus_and_copy(&ui, std::path::Path::new(&path)).await;
+        });
+    });
+    ui.app.add_action(&copy_file);
+}
+
+/// Starts recording a region, or stops the recording that is running. `copy` puts the finished
+/// recording on the clipboard as a file.
+fn record(ui: &Rc<Ui>, copy: bool) {
+    if ui.stop(Stop::Save) {
+        return;
+    }
+    let ui = ui.clone();
+    glib::spawn_future_local(async move {
+        if let Err(e) = record_region(&ui, copy).await {
+            ui.set_recording(None);
+            if ui.quit_after.get() {
+                ui.app.quit();
+                return;
+            }
+            ui.window.present();
+            let dialog = adw::AlertDialog::new(Some("Recording Failed"), Some(&e));
+            dialog.add_response("ok", "OK");
+            dialog.present(Some(&ui.window));
+        }
+    });
 }
 
 fn connect(ui: &Rc<Ui>) {
@@ -617,7 +634,7 @@ fn run_hotkey(ui: &Rc<Ui>, id: &str) {
         return;
     };
     if hotkey.capture == Capture::Record {
-        ui.app.activate_action("record", None);
+        record(ui, hotkey.after.for_capture(Capture::Record).copies());
         return;
     }
     let ui = ui.clone();
@@ -797,8 +814,16 @@ impl Ui {
             self.toasts
                 .add_toast(output::saved_toast(path, copied, reveal));
         } else {
-            self.app
-                .send_notification(None, &output::saved_notification(title, &path, reveal));
+            let n = output::saved_notification(title, &path, reveal);
+            if !copied && reveal == output::Reveal::InFolder {
+                // A recording that wasn't copied can still be, from here.
+                n.add_button_with_target_value(
+                    "Copy",
+                    "app.copy-file",
+                    Some(&path.to_string_lossy().to_variant()),
+                );
+            }
+            self.app.send_notification(None, &n);
         }
     }
 
@@ -1012,6 +1037,18 @@ async fn flash_and_copy(ui: &Ui, image: Frame) -> Frame {
     rx.recv().await.expect("the flash always finishes")
 }
 
+/// Puts a file on the clipboard behind an invisible window, which gives ShareZ the focus that
+/// Wayland asks for. For recordings.
+async fn focus_and_copy(ui: &Ui, path: &std::path::Path) {
+    let (tx, rx) = async_channel::bounded(1);
+    let path = path.to_owned();
+    overlay::focus(Some(ui.app.upcast_ref()), move || {
+        output::copy_file(&path);
+        let _ = tx.try_send(());
+    });
+    let _ = rx.recv().await;
+}
+
 /// Takes a screenshot the way `capture` says, copied already when `copy`. `None` if the user
 /// cancelled.
 async fn take(ui: &Ui, capture: Capture, copy: bool) -> Result<Option<Frame>, String> {
@@ -1149,7 +1186,7 @@ fn annotate(ui: &Rc<Ui>, image: Frame, shown: bool) {
     });
 }
 
-async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
+async fn record_region(ui: &Rc<Ui>, copy: bool) -> Result<(), String> {
     let session = Session::detect().ok_or("No display server found.")?;
     let format = Format::detect().map_err(|e| e.to_string())?;
     if ui.busy.replace(true) {
@@ -1220,24 +1257,23 @@ async fn record_region(ui: &Rc<Ui>) -> Result<(), String> {
     drop(outline);
     ui.set_recording(None);
     let saved = result.map_err(|e| e.to_string())?;
-    if let Some(path) = &saved {
-        output::copy_video(path);
-    }
     if ui.quit_after.get() {
         ui.app.quit();
         return Ok(());
     }
+    if copy && let Some(path) = &saved {
+        focus_and_copy(ui, path).await;
+    }
     if shown {
         ui.window.present();
     }
+    let title = if copy {
+        "Recording copied"
+    } else {
+        "Recording saved"
+    };
     match saved {
-        Some(path) => ui.tell_saved(
-            "Recording copied",
-            path,
-            true,
-            shown,
-            output::Reveal::InFolder,
-        ),
+        Some(path) => ui.tell_saved(title, path, copy, shown, output::Reveal::InFolder),
         None if shown => ui.toasts.add_toast(adw::Toast::new("Recording discarded")),
         None => {}
     }

@@ -69,6 +69,15 @@ impl Capture {
     pub fn is_screenshot(self) -> bool {
         self != Capture::Record
     }
+
+    /// The after-capture actions that fit it. A recording is already a file by the time it ends,
+    /// so it can only be kept, or kept and copied as a file.
+    pub fn afters(self) -> &'static [After] {
+        match self {
+            Capture::Record => &[After::SaveAndCopy, After::Save],
+            _ => &After::ALL,
+        }
+    }
 }
 
 /// What happens to a screenshot once it is taken.
@@ -118,6 +127,13 @@ impl After {
 
     pub fn copies(self) -> bool {
         matches!(self, After::SaveAndCopy | After::Copy)
+    }
+
+    /// What it comes to for `capture`: one that doesn't fit it (a recording set to ask, say)
+    /// falls back to the first that does.
+    pub fn for_capture(self, capture: Capture) -> After {
+        let fits = capture.afters();
+        if fits.contains(&self) { self } else { fits[0] }
     }
 }
 
@@ -194,11 +210,11 @@ impl Hotkey {
 
     /// "Region, then ask what to do", for the list of hotkeys.
     pub fn summary(&self) -> String {
-        if self.capture.is_screenshot() {
-            format!("{} · {}", self.capture.title(), self.after.title())
-        } else {
-            self.capture.title().to_owned()
-        }
+        format!(
+            "{} · {}",
+            self.capture.title(),
+            self.after.for_capture(self.capture).title()
+        )
     }
 
     /// What the desktop shows next to the key in its own settings.
@@ -626,6 +642,20 @@ mod tests {
     }
 
     #[test]
+    fn recordings_are_kept_and_maybe_copied() {
+        assert_eq!(After::Save.for_capture(Capture::Record), After::Save);
+        // Recordings made before they had a choice were always copied.
+        for a in [After::Ask, After::Annotate, After::Copy] {
+            assert_eq!(a.for_capture(Capture::Record), After::SaveAndCopy);
+        }
+        for c in Capture::ALL.into_iter().filter(|c| c.is_screenshot()) {
+            for a in After::ALL {
+                assert_eq!(a.for_capture(c), a);
+            }
+        }
+    }
+
+    #[test]
     fn fresh_ids_are_new() {
         let mut hotkeys = Hotkey::defaults();
         let a = Hotkey::fresh(&hotkeys);
@@ -639,6 +669,6 @@ mod tests {
     fn summaries() {
         let d = Hotkey::defaults();
         assert_eq!(d[2].summary(), "Region · Ask What to Do");
-        assert_eq!(d[3].summary(), "Record Region");
+        assert_eq!(d[3].summary(), "Record Region · Save and Copy");
     }
 }

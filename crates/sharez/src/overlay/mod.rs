@@ -384,6 +384,18 @@ type Flashed = Box<dyn FnOnce()>;
 /// runs once the flash has focus (or it waited long enough), so `done` can set the clipboard on
 /// Wayland, where only the focused app may.
 pub fn flash(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
+    cover(app, 0.5, FLASH, done);
+}
+
+/// The same without the flash: an invisible window takes focus just long enough for `done` to
+/// set the clipboard. For recordings, which have nothing to flash about.
+pub fn focus(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
+    cover(app, 0.0, Duration::ZERO, done);
+}
+
+/// A window over the whole screen, `peak` white fading out over `fade`, that runs `done` once it
+/// has focus.
+fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl FnOnce() + 'static) {
     let css = gtk::CssProvider::new();
     css.load_from_string(
         "window.sharez-flash { background: transparent; }
@@ -398,7 +410,7 @@ pub fn flash(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
     }
     let light = gtk::Box::builder()
         .css_classes(["sharez-flash-light"])
-        .opacity(0.5)
+        .opacity(peak)
         .hexpand(true)
         .vexpand(true)
         .build();
@@ -441,8 +453,12 @@ pub fn flash(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
     let started = Instant::now();
     let fading = window.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
-        let t = started.elapsed().as_secs_f64() / FLASH.as_secs_f64();
-        light.set_opacity(0.5 * (1.0 - t.min(1.0)));
+        let t = if fade.is_zero() {
+            1.0
+        } else {
+            started.elapsed().as_secs_f64() / fade.as_secs_f64()
+        };
+        light.set_opacity(peak * (1.0 - t.min(1.0)));
         if t < 1.0 || done.borrow().is_some() {
             return glib::ControlFlow::Continue;
         }
