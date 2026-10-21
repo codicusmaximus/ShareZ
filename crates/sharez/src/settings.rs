@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn deleting_every_hotkey_sticks() {
         let file = keyfile("[hotkeys]\norder=\n");
-        assert!(load_hotkeys(&file).is_empty());
+        assert_eq!(load_hotkeys(&file), Vec::<Hotkey>::new());
     }
 
     #[test]
