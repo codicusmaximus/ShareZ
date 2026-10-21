@@ -2,6 +2,10 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
+- **Recordings now paste.** When a recording finishes, ShareZ copies the video file itself to the clipboard, so you can paste it into Files, a chat app or an email. On Wayland, pasting used to do nothing. A Record Region hotkey can be set to **Save and Copy** or **Save Only**, and a recording you didn't copy gets a **Copy** button on its notification.
+
+Also in 0.2, if you are coming from 0.1:
+
 - **An annotator, ported from ShareX's image editor.** Draw rectangles, ellipses, arrows, lines and freehand; add outlined or boxed text, speech balloons and numbered steps; blur, pixelate or highlight anything private; magnify, crop, rotate and flip. It has ShareX's 17 tools, their toolbar options and keys, plus undo and redo. Open it from the after-capture popup (**E**), from a hotkey set to **Open in Annotator**, or on any image with `sharez --annotate FILE`.
 - **Hotkeys you can edit.** Under **Hotkeys** in the ShareZ window, change, add or delete hotkeys. Each one picks what to capture (a region, the whole screen, the last region, or a recording) and what to do with a screenshot (save and copy, copy only, save only, open in the annotator, or ask).
 - **An after-capture popup** shows the screenshot and asks what to do with it: save and copy (Enter), annotate (E), copy (C), save (S), save as (A), save and open it (O), or discard (Esc).
@@ -26,7 +30,7 @@ Then open **ShareZ** from your app launcher.
 
 **The first screenshot** asks whether ShareZ may take screenshots; allow it once and it won't ask again.
 
-**Upgrading from 0.1?** Install the new file the same way; your settings and hotkeys are kept. On GNOME, log out and back in once more so the top-bar menu picks up Capture Screen.
+**Upgrading?** Install the new file the same way; your settings and hotkeys are kept. ShareZ keeps running in the background, so quit it from its top-bar or tray icon (**Quit**) afterwards, or log out and back in, for the new version to start. On GNOME, logging out and back in also loads the updated top-bar extension. If you once installed ShareZ with the repository's `install.sh`, remove that copy first (`rm ~/.local/bin/sharez ~/.local/share/applications/io.github.codicusmaximus.ShareZ.desktop`), because it takes priority over the package.
 
 ### Optional: MP4 recordings
 
