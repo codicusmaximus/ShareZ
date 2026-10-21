@@ -1079,7 +1079,7 @@ mod tests {
     fn a_click_without_a_drag_draws_nothing_and_leaves_nothing_to_undo() {
         let mut e = editor();
         drag(&mut e, (10.0, 10.0), (11.0, 11.0));
-        assert!(e.shapes.is_empty());
+        assert_eq!(e.shapes.len(), 0);
         assert!(!e.can_undo());
     }
 
@@ -1109,7 +1109,7 @@ mod tests {
         e.undo();
         assert_eq!(e.shapes.len(), 1);
         e.undo();
-        assert!(e.shapes.is_empty());
+        assert_eq!(e.shapes.len(), 0);
         e.redo();
         e.redo();
         assert_eq!(e.shapes.len(), 2);
@@ -1157,7 +1157,7 @@ mod tests {
         };
         e.release(Point::new(100.0, 50.0));
         e.finish_text(id, true, None);
-        assert!(e.shapes.is_empty());
+        assert_eq!(e.shapes.len(), 0);
         let Some(Request::EditText { id, .. }) = e.press(Point::new(100.0, 50.0)) else {
             panic!("no text request");
         };
@@ -1189,7 +1189,7 @@ mod tests {
         drag(&mut e, (10.0, 10.0), (59.0, 39.0));
         assert_eq!(e.right_click(Point::new(150.0, 80.0)), RightClick::Continue);
         assert_eq!(e.right_click(Point::new(20.0, 20.0)), RightClick::Handled);
-        assert!(e.shapes.is_empty());
+        assert_eq!(e.shapes.len(), 0);
     }
 
     #[test]

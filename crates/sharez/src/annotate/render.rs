@@ -26,7 +26,12 @@ pub fn surface(image: &Frame) -> ImageSurface {
         for y in 0..image.height as usize {
             let src = &image.data[y * image.stride()..(y + 1) * image.stride()];
             let dst = &mut data[y * stride..y * stride + image.width as usize * 4];
-            for (p, q) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+            for (p, q) in src
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(dst.as_chunks_mut::<4>().0)
+            {
                 let a = u32::from(p[3]);
                 let pre = |c: u8| (u32::from(c) * a + 127) / 255;
                 let v = (a << 24) | (pre(p[0]) << 16) | (pre(p[1]) << 8) | pre(p[2]);
@@ -44,7 +49,7 @@ pub fn frame(mut s: ImageSurface) -> Frame {
     let mut out = Vec::with_capacity(w * h * 4);
     let data = s.data().expect("surface data");
     for y in 0..h {
-        for q in data[y * stride..y * stride + w * 4].chunks_exact(4) {
+        for q in data[y * stride..y * stride + w * 4].as_chunks::<4>().0 {
             let v = u32::from_ne_bytes([q[0], q[1], q[2], q[3]]);
             let a = v >> 24;
             let un = |c: u32| {

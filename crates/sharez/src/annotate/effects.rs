@@ -113,7 +113,7 @@ pub fn pixelate(image: &mut Frame, size: i32) {
 /// Darkens each channel to at most the highlight's, like a highlighter pen
 /// (`ImageHelpers.HighlightImage`).
 pub fn highlight(image: &mut Frame, color: Color) {
-    for p in image.data.chunks_exact_mut(4) {
+    for p in image.data.as_chunks_mut::<4>().0 {
         p[0] = p[0].min(color.r);
         p[1] = p[1].min(color.g);
         p[2] = p[2].min(color.b);
