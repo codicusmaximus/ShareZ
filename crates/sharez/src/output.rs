@@ -175,6 +175,20 @@ pub fn save_image_to(path: PathBuf, image: &Frame) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Reads an image file, in any format GTK can load.
+pub fn load_image(path: &std::path::Path) -> Result<Frame, String> {
+    let texture = gdk::Texture::from_filename(path).map_err(|e| e.to_string())?;
+    let mut downloader = gdk::TextureDownloader::new(&texture);
+    downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
+    let (bytes, stride) = downloader.download_bytes();
+    let (width, height) = (texture.width() as usize, texture.height() as usize);
+    let mut data = Vec::with_capacity(width * height * 4);
+    for row in bytes.chunks(stride).take(height) {
+        data.extend_from_slice(&row[..width * 4]);
+    }
+    Ok(Frame::new(width as u32, height as u32, data))
+}
+
 /// The image as a texture, for showing or copying it.
 pub fn texture(image: &Frame) -> gdk::MemoryTexture {
     gdk::MemoryTexture::new(

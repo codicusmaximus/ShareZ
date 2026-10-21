@@ -24,6 +24,8 @@ pub enum Choice {
     SaveAs(PathBuf),
     /// Save it, then open it in the default image viewer.
     SaveAndOpen,
+    /// Draw on it in the annotator first.
+    Annotate,
     Discard,
 }
 
@@ -45,13 +47,20 @@ struct Answer {
     choice: fn() -> Option<Choice>,
 }
 
-const ANSWERS: [Answer; 5] = [
+const ANSWERS: [Answer; 6] = [
     Answer {
         title: "Save and Copy",
         icon: "emblem-ok-symbolic",
         accel: "Return",
         key: gdk::Key::Return,
         choice: || Some(Choice::SaveAndCopy),
+    },
+    Answer {
+        title: "Annotate",
+        icon: "sharez-annotate-symbolic",
+        accel: "e",
+        key: gdk::Key::e,
+        choice: || Some(Choice::Annotate),
     },
     Answer {
         title: "Copy to Clipboard",
@@ -94,6 +103,7 @@ pub fn ask(
     image: &gdk::MemoryTexture,
     done: impl FnOnce(Choice) + 'static,
 ) {
+    crate::annotate::icons::install();
     let answers = list();
     let discard = list();
     let window = adw::Window::builder()
@@ -330,6 +340,7 @@ mod tests {
     fn only_copying_answers_copy() {
         assert!(Choice::Copy.copies() && Choice::SaveAndCopy.copies());
         assert!(!Choice::Save.copies() && !Choice::SaveAndOpen.copies());
+        assert!(!Choice::Annotate.copies());
         assert!(!Choice::SaveAs("/tmp/a.png".into()).copies());
     }
 
