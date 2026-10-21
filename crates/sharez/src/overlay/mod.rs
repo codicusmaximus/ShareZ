@@ -372,3 +372,84 @@ impl Snapper {
         }
     }
 }
+
+/// How long the shutter flash takes to fade.
+const FLASH: Duration = Duration::from_millis(250);
+/// How long the flash waits for focus before going on without it.
+const FOCUS_WAIT: Duration = Duration::from_millis(600);
+
+type Flashed = Box<dyn FnOnce()>;
+
+/// A quick white flash over the whole screen, for screenshots taken without the overlay. `done`
+/// runs once the flash has focus (or it waited long enough), so `done` can set the clipboard on
+/// Wayland, where only the focused app may.
+pub fn flash(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
+    let css = gtk::CssProvider::new();
+    css.load_from_string(
+        "window.sharez-flash { background: transparent; }
+         .sharez-flash-light { background: white; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+    let light = gtk::Box::builder()
+        .css_classes(["sharez-flash-light"])
+        .opacity(0.5)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    let window = gtk::Window::builder()
+        .title("ShareZ Flash")
+        .decorated(false)
+        .css_classes(["sharez-flash"])
+        .child(&light)
+        .build();
+    window.set_application(app);
+
+    let done: Rc<RefCell<Option<Flashed>>> = Rc::new(RefCell::new(Some(Box::new(done))));
+    let run = {
+        let done = Rc::clone(&done);
+        move || {
+            if let Some(done) = done.borrow_mut().take() {
+                done();
+            }
+        }
+    };
+    let run = Rc::new(run);
+    window.connect_is_active_notify(glib::clone!(
+        #[strong]
+        run,
+        move |w| {
+            if w.is_active() {
+                run();
+            }
+        }
+    ));
+    glib::timeout_add_local_once(
+        FOCUS_WAIT,
+        glib::clone!(
+            #[strong]
+            run,
+            move || run()
+        ),
+    );
+    // Fade out, then close once `done` has run.
+    let started = Instant::now();
+    let fading = window.clone();
+    glib::timeout_add_local(Duration::from_millis(16), move || {
+        let t = started.elapsed().as_secs_f64() / FLASH.as_secs_f64();
+        light.set_opacity(0.5 * (1.0 - t.min(1.0)));
+        if t < 1.0 || done.borrow().is_some() {
+            return glib::ControlFlow::Continue;
+        }
+        fading.destroy();
+        glib::ControlFlow::Break
+    });
+
+    window.fullscreen();
+    window.present();
+}

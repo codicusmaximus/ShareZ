@@ -139,9 +139,10 @@ notification offers Stop.
 ## Running in the background
 
 The app holds itself open (`ApplicationHoldGuard`), so closing the window only hides it. Everything
-goes through app actions (`capture`, `record`, `stop-recording`, `discard-recording`, `show`,
-`quit`): the window's buttons, the tray menu, the global shortcuts, notifications, and
-`sharez --capture`/`--record`, which GApplication forwards to the running instance over D-Bus.
+goes through app actions (`capture`, `capture-screen`, `record`, `hotkey`, `stop-recording`,
+`discard-recording`, `show`, `quit`): the window's buttons, the tray menu, the global shortcuts,
+notifications, and `sharez --capture`/`--hotkey ID`/…, which GApplication forwards to the running
+instance over D-Bus.
 
 - **Tray icon.** GNOME has no tray, so the ShareZ Helper extension shows a top-bar icon while
   `io.github.codicusmaximus.ShareZ` is on the session bus and calls the app's actions
@@ -149,14 +150,20 @@ goes through app actions (`capture`, `record`, `stop-recording`, `discard-record
   (`SetRecording`). ShareZ checks the extension's `Features` for `indicator` and otherwise
   publishes a StatusNotifierItem with `ksni`, which KDE, most X11 panels and GNOME's AppIndicator
   extension show.
+- **Hotkeys.** Each hotkey (`hotkeys::Hotkey`) is an id, a name, a `Capture` (region, whole
+  screen, last region, record) and an `After` (save and copy, copy, save, ask), kept in
+  `settings.ini`; a press runs the `hotkey` action with its id, which looks up the rest, so editing
+  what a hotkey does never touches its keys. The id is what the desktop stores the key under, so
+  it never changes; new hotkeys get a fresh one, which makes the desktop ask about them.
 - **Global shortcuts.** On Wayland the `GlobalShortcuts` portal binds them. ShareZ registers its
   app ID with the portal's host registry first, lists what the desktop already has for it, and
-  only asks to bind (which shows the desktop's dialog) when a shortcut is missing. On X11 ShareZ
-  grabs the keys on the root window (with and without Caps Lock and Num Lock) on a thread of its
-  own, and keeps them in `settings.ini`.
-- **Clipboard.** Wayland only lets the focused app set the clipboard, and with the window hidden
-  that is the region overlay. The screenshot is copied while the overlay is still open, before it
-  closes, and the clipboard stays served for as long as ShareZ runs.
+  only asks to bind (which shows the desktop's dialog, with the hotkeys' keys as suggestions) when
+  a hotkey is missing. On X11 ShareZ grabs the keys on the root window (with and without Caps Lock
+  and Num Lock) on a thread of its own, and lets go of them while a hotkey is being edited.
+- **Clipboard.** Wayland only lets the focused app set the clipboard, so a screenshot is copied
+  while one of ShareZ's windows has focus: the region overlay before it closes, the after-capture
+  popup when an answer copies, or, for captures without either, a quick full-screen shutter
+  flash (`overlay::flash`). The clipboard stays served for as long as ShareZ runs.
 - **Feedback.** With the window open, results are toasts; with it hidden, notifications. A
   screenshot's click opens the image; a recording's shows the file selected in the file manager
   (`GtkFileLauncher` asks `org.freedesktop.FileManager1.ShowItems`), ready to drag. A button on

@@ -15,7 +15,7 @@ use x11rb::{
     rust_connection::RustConnection,
 };
 
-use crate::hotkeys::{Hotkey, Trigger};
+use crate::hotkeys::Trigger;
 
 /// The modifiers a shortcut is made of. Caps Lock and Num Lock are ignored.
 /// X11's modifier bits (`ModMask`): Shift, Lock, Control, Mod1 (Alt), Mod2 (Num Lock), Mod4.
@@ -46,7 +46,8 @@ pub struct Grabs {
     conn: std::sync::Arc<RustConnection>,
     /// Woken with a client message so the listening thread can end.
     wake: Window,
-    labels: Vec<(Hotkey, String)>,
+    /// Hotkey id → its keys, for people.
+    labels: Vec<(String, String)>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -54,17 +55,18 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 impl Grabs {
-    /// Grabs `keys` (spec triggers); presses go to `pressed`. Also returns a sentence for each
-    /// key that couldn't be grabbed, such as one another app already has.
+    /// Grabs `keys` (hotkey id, spec trigger); the ids of those pressed go to `pressed`. Also
+    /// returns a sentence for each key that couldn't be grabbed, such as one another app already
+    /// has.
     pub fn start(
-        keys: &[(Hotkey, String)],
-        pressed: async_channel::Sender<Hotkey>,
+        keys: &[(String, String)],
+        pressed: async_channel::Sender<String>,
     ) -> Result<(Self, Vec<String>), String> {
         let (conn, screen) = RustConnection::connect(None).map_err(err)?;
         let conn = std::sync::Arc::new(conn);
         let root = conn.setup().roots[screen].root;
         let codes = keycodes(&conn)?;
-        let mut grabs: HashMap<(Keycode, u16), Hotkey> = HashMap::new();
+        let mut grabs: HashMap<(Keycode, u16), String> = HashMap::new();
         let mut labels = Vec::new();
         let mut problems = Vec::new();
         for (hotkey, spec) in keys {
@@ -95,8 +97,8 @@ impl Grabs {
                 ok &= grabbed.is_ok();
             }
             if ok {
-                grabs.insert((code, m), *hotkey);
-                labels.push((*hotkey, trigger.label()));
+                grabs.insert((code, m), hotkey.clone());
+                labels.push((hotkey.clone(), trigger.label()));
             } else {
                 problems.push(format!(
                     "{} is already used by another app",
@@ -127,7 +129,7 @@ impl Grabs {
                     Event::KeyPress(k) => {
                         let state = u16::from(k.state) & RELEVANT;
                         if let Some(h) = grabs.get(&(k.detail, state)) {
-                            let _ = pressed.send_blocking(*h);
+                            let _ = pressed.send_blocking(h.clone());
                         }
                     }
                     Event::ClientMessage(m) if m.window == wake => break,
@@ -138,7 +140,7 @@ impl Grabs {
         Ok((Self { conn, wake, labels }, problems))
     }
 
-    pub fn labels(&self) -> Vec<(Hotkey, String)> {
+    pub fn labels(&self) -> Vec<(String, String)> {
         self.labels.clone()
     }
 }

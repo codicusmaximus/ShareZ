@@ -156,6 +156,7 @@ impl ksni::Tray for Sni {
         } else {
             vec![
                 Self::item("Capture Region", "capture"),
+                Self::item("Capture Screen", "capture-screen"),
                 Self::item("Record Region", "record"),
             ]
         };

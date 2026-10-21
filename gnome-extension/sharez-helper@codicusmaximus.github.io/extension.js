@@ -112,6 +112,7 @@ export default class ShareZHelperExtension extends Extension {
             return i;
         };
         this._capture = item('Capture Region', 'capture');
+        this._captureScreen = item('Capture Screen', 'capture-screen');
         this._record = item('Record Region', 'record');
         this._discard = item('Discard Recording', 'discard-recording');
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -133,6 +134,7 @@ export default class ShareZHelperExtension extends Extension {
         const recording = this._recording;
         this._icon.icon_name = recording ? 'media-record-symbolic' : 'applets-screenshooter-symbolic';
         this._capture.visible = !recording;
+        this._captureScreen.visible = !recording;
         this._discard.visible = recording;
         this._record.label.text = recording ? 'Stop Recording' : 'Record Region';
     }
