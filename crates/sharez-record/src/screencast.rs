@@ -62,6 +62,18 @@ fn cancelled(e: ashpd::Error) -> Error {
 
 /// Starts sharing one monitor. The first time, the desktop asks which one.
 pub(crate) async fn open() -> Result<Cast> {
+    match start(std::fs::read_to_string(token_path()).ok()).await {
+        // KDE's picker also offers a new, empty virtual screen, and remembers it. Recording that
+        // films only the wallpaper, so forget it and ask once more.
+        Err(Error::VirtualScreen) => {
+            let _ = std::fs::remove_file(token_path());
+            start(None).await
+        }
+        cast => cast,
+    }
+}
+
+async fn start(token: Option<String>) -> Result<Cast> {
     let proxy = Screencast::new().await?;
     let session = proxy
         .create_session(CreateSessionOptions::default())
@@ -75,7 +87,6 @@ pub(crate) async fn open() -> Result<Cast> {
     } else {
         CursorMode::Hidden
     };
-    let token = std::fs::read_to_string(token_path()).ok();
     proxy
         .select_sources(
             &session,
@@ -94,6 +105,11 @@ pub(crate) async fn open() -> Result<Cast> {
         .await?
         .response()
         .map_err(cancelled)?;
+    let stream = response.streams().first().ok_or(Error::NoStream)?;
+    if stream.source_type() == Some(SourceType::Virtual) {
+        let _ = session.close().await;
+        return Err(Error::VirtualScreen);
+    }
     if let Some(token) = response.restore_token() {
         let path = token_path();
         if let Some(dir) = path.parent() {
@@ -101,7 +117,6 @@ pub(crate) async fn open() -> Result<Cast> {
         }
         let _ = std::fs::write(path, token);
     }
-    let stream = response.streams().first().ok_or(Error::NoStream)?;
     let area = stream.size().map(|(w, h)| {
         let (x, y) = stream.position().unwrap_or_default();
         Rect::new(x.into(), y.into(), w.into(), h.into())

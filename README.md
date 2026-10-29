@@ -176,7 +176,9 @@ If your voice is distorted before it reaches ShareZ, turn the input volume down 
 settings; the spike found laptop mics clipping at their default level.
 
 On Wayland the desktop asks which screen to share the first time you record. ShareZ remembers the
-answer, so later recordings start straight away.
+answer, so later recordings start straight away. On KDE, pick one of your screens: the picker also offers a
+virtual screen, which is an empty extra desktop that only shows the wallpaper, so ShareZ asks again
+if that one is picked.
 
 Recordings are MP4 (H.264) when an H.264 encoder is installed, otherwise WebM (VP8). ShareZ tells
 you which GStreamer plugins are missing if it can't record. On Fedora:

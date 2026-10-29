@@ -32,6 +32,11 @@ pub enum Error {
     NoStream,
     #[error("The region isn't on the screen that was shared.")]
     RegionNotShared,
+    #[error(
+        "A virtual screen was shared, which only shows the wallpaper. Record again and pick one \
+         of your screens."
+    )]
+    VirtualScreen,
     #[error("The recording did not finish in time, so the file may be unplayable.")]
     StopTimeout,
     #[error("{0}")]
