@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "sharez"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "ashpd",
  "async-channel",
@@ -1442,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "sharez-capture"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "ashpd",
  "futures-lite",
@@ -1455,14 +1455,14 @@ dependencies = [
 
 [[package]]
 name = "sharez-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "sharez-record"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "ashpd",
  "async-channel",
@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "sharez-windows"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-channel",
  "async-io",

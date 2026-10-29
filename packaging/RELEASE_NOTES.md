@@ -2,6 +2,7 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
+- **KDE recordings show your screen again.** KDE's screen-share picker also offers an empty virtual screen, and once it was picked every recording showed only the wallpaper. ShareZ now notices that and asks again, so pick one of your screens.
 - **Recordings now paste.** When a recording finishes, ShareZ copies the video file itself to the clipboard, so you can paste it into Files, a chat app or an email. On Wayland, pasting used to do nothing. A Record Region hotkey can be set to **Save and Copy** or **Save Only**, and a recording you didn't copy gets a **Copy** button on its notification.
 
 Also in 0.2, if you are coming from 0.1:
