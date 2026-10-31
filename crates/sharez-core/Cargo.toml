@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+png = { version = "0.18.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 
 [lints]

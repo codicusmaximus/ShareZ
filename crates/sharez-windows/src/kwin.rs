@@ -1,7 +1,13 @@
 //! KDE Plasma: KWin scripts read the window stack (or place a window of ours) and call back into
 //! ShareZ over D-Bus.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
+    sync::atomic::{AtomicU32, Ordering},
+    time::Duration,
+};
 
 use futures_lite::FutureExt;
 use serde::Deserialize;
@@ -58,16 +64,43 @@ impl Sink {
     }
 }
 
-/// KWin reads the script from disk. Under Flatpak only `$XDG_RUNTIME_DIR/app/$FLATPAK_ID` is
-/// shared with the host, at the same path.
-fn script_path(file: &str) -> PathBuf {
-    let runtime =
-        std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
-    match std::env::var_os("FLATPAK_ID") {
+/// KWin reads the script from disk, so it goes in the user's private runtime directory: never a
+/// shared one such as /tmp, where another user could swap it for a script of their own. Under
+/// Flatpak only `$XDG_RUNTIME_DIR/app/$FLATPAK_ID` is shared with the host, at the same path.
+fn script_dir() -> Result<PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| Error::BadData("KWin", "XDG_RUNTIME_DIR is not set".into()))?;
+    Ok(match std::env::var_os("FLATPAK_ID") {
         Some(id) => runtime.join("app").join(id),
         None => runtime,
+    })
+}
+
+/// Writes `script` to a new file only we can read, named after this process so that two copies of
+/// ShareZ don't share one.
+fn write_script(script: &str, file: &str) -> Result<PathBuf> {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let dir = script_dir()?;
+    for _ in 0..100 {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("{}-{n}-{file}", std::process::id()));
+        // A file left behind by a crashed run of the same process ID: try the next name.
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                f.write_all(script.as_bytes())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.into()),
+        }
     }
-    .join(file)
+    Err(Error::BadData("KWin", "no free script file name".into()))
 }
 
 /// Moves a window of ours to `rect`, keeps it above the others on every desktop and out of the
@@ -112,8 +145,7 @@ async fn run(script: &str, file: &str) -> Result<String> {
         .build()
         .await?;
 
-    let path = script_path(file);
-    std::fs::write(&path, script)?;
+    let path = write_script(script, file)?;
     let result = run_script(&path, &rx).await;
     let _ = std::fs::remove_file(&path);
     result

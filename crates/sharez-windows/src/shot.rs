@@ -76,29 +76,9 @@ async fn gnome(id: u32) -> Result<Shot> {
     )
     .await?;
     Ok(Shot {
-        image: decode_png(&png)?,
+        image: sharez_core::png::decode(std::io::Cursor::new(png))?,
         area: Rect::new(x.into(), y.into(), w.into(), h.into()),
     })
-}
-
-fn decode_png(png: &[u8]) -> Result<Frame> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size().unwrap_or_default()];
-    let info = reader.next_frame(&mut buf)?;
-    buf.truncate(info.buffer_size());
-    let data = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => buf
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, 255])
-            .collect(),
-        other => return Err(Error::BadData("ShareZ Helper", format!("PNG {other:?}"))),
-    };
-    Ok(Frame::new(info.width, info.height, data))
 }
 
 /// The `QImage::Format` values KWin sends, as the byte order of one pixel.
@@ -189,7 +169,8 @@ fn repack(
     pixel: impl Fn([u8; 4]) -> [u8; 4],
 ) -> Result<Frame> {
     let row = width as usize * 4;
-    if stride < row || data.len() < stride * height as usize {
+    // A zero stride passes the size check when the width is zero too, and `chunks` panics on it.
+    if stride == 0 || stride < row || data.len() < stride * height as usize {
         return Err(Error::BadData(
             "window image",
             "fewer bytes than its size".into(),
@@ -252,6 +233,14 @@ fn x11_err(e: impl std::fmt::Display) -> Error {
     Error::X11(e.to_string())
 }
 
+/// A side of a window's pixmap, which includes the border on both ends.
+fn with_border(side: u16, border: u16) -> Result<u16> {
+    border
+        .checked_mul(2)
+        .and_then(|b| side.checked_add(b))
+        .ok_or_else(|| Error::X11(format!("window too large: {side} px plus border {border}")))
+}
+
 fn x11(client: XWindow) -> Result<Shot> {
     let (conn, screen_num) = x11rb::connect(None).map_err(x11_err)?;
     let setup = conn.setup();
@@ -304,9 +293,9 @@ fn x11(client: XWindow) -> Result<Shot> {
             .map_err(x11_err)?
             .reply()
             .map_err(x11_err)?;
-        // The pixmap includes the border.
         let border = geo.border_width;
-        let (w, h) = (geo.width + 2 * border, geo.height + 2 * border);
+        let side = |s| with_border(s, border);
+        let (w, h) = (side(geo.width)?, side(geo.height)?);
         let bpp = setup
             .pixmap_formats
             .iter()
@@ -397,5 +386,12 @@ mod tests {
         let f = repack(&data, 1, 2, 6, |p| p).unwrap();
         assert_eq!(f.data, [1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(repack(&data[..8], 1, 2, 6, |p| p).is_err());
+        assert!(repack(&data, 0, 2, 0, |p| p).is_err());
+    }
+
+    #[test]
+    fn border_overflow_is_an_error() {
+        assert_eq!(with_border(100, 2).unwrap(), 104);
+        assert!(with_border(65_000, 300).is_err());
     }
 }

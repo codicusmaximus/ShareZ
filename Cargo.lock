@@ -1446,7 +1446,6 @@ version = "0.2.2"
 dependencies = [
  "ashpd",
  "futures-lite",
- "png",
  "sharez-core",
  "thiserror",
  "url",
@@ -1457,6 +1456,7 @@ dependencies = [
 name = "sharez-core"
 version = "0.2.2"
 dependencies = [
+ "png",
  "serde",
 ]
 
@@ -1481,7 +1481,6 @@ dependencies = [
  "async-io",
  "futures-lite",
  "futures-util",
- "png",
  "serde",
  "serde_json",
  "sharez-core",
