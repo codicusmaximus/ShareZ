@@ -3,6 +3,7 @@
 
 pub mod frame;
 pub mod geom;
+pub mod png;
 pub mod session;
 
 pub use frame::Frame;

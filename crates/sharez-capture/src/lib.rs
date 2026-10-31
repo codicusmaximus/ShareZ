@@ -23,7 +23,7 @@ pub enum Error {
     #[error("reading the screenshot: {0}")]
     Io(#[from] std::io::Error),
     #[error("decoding the screenshot: {0}")]
-    Png(#[from] png::DecodingError),
+    Png(#[from] sharez_core::png::Error),
     #[error("X11: {0}")]
     X11(String),
     #[error("unsupported pixel format: {0}")]

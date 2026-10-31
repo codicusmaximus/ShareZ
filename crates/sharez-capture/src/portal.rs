@@ -31,21 +31,5 @@ pub async fn freeze() -> Result<Frame> {
 }
 
 fn decode_png(path: &std::path::Path) -> Result<Frame> {
-    let mut decoder = png::Decoder::new(BufReader::new(File::open(path)?));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size().unwrap_or_default()];
-    let info = reader.next_frame(&mut buf)?;
-    buf.truncate(info.buffer_size());
-    let data = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => buf
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, 255])
-            .collect(),
-        other => return Err(Error::UnsupportedFormat(format!("PNG {other:?}"))),
-    };
-    Ok(Frame::new(info.width, info.height, data))
+    Ok(sharez_core::png::decode(BufReader::new(File::open(path)?))?)
 }

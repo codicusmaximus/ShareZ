@@ -8,7 +8,8 @@ use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 use sharez_core::{Frame, PixelRect};
 
-/// A new, timestamped file name in the user's `kind` folder, under ShareZ/.
+/// A new, timestamped file name in the user's `kind` folder, under ShareZ/. Names are to the
+/// second, so a second capture in the same second gets `_2`, then `_3`, and so on.
 pub fn new_file(kind: glib::UserDirectory, extension: &str) -> Result<PathBuf, String> {
     let dir = glib::user_special_dir(kind)
         .unwrap_or_else(glib::home_dir)
@@ -16,7 +17,19 @@ pub fn new_file(kind: glib::UserDirectory, extension: &str) -> Result<PathBuf, S
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     let name = chrono::Local::now().format("ShareZ_%Y-%m-%d_%H-%M-%S");
-    Ok(dir.join(format!("{name}.{extension}")))
+    Ok(free_name(&dir, &name.to_string(), extension))
+}
+
+/// `dir/stem.extension`, or the first of `stem_2.extension`, `stem_3.extension`… that isn't taken.
+fn free_name(dir: &std::path::Path, stem: &str, extension: &str) -> PathBuf {
+    let mut path = dir.join(format!("{stem}.{extension}"));
+    for n in 2.. {
+        if !path.exists() {
+            break;
+        }
+        path = dir.join(format!("{stem}_{n}.{extension}"));
+    }
+    path
 }
 
 /// The file's name, for messages.
@@ -144,8 +157,7 @@ fn gnome_copied_files(uri: &str) -> String {
     format!("copy\n{uri}")
 }
 
-fn write_png(path: &std::path::Path, image: &Frame) -> Result<(), String> {
-    let file = File::create(path).map_err(|e| e.to_string())?;
+fn write_png(file: File, image: &Frame) -> Result<(), String> {
     let mut encoder = png::Encoder::new(BufWriter::new(file), image.width, image.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
@@ -177,14 +189,29 @@ pub fn copy_texture(texture: &gdk::MemoryTexture) {
     }
 }
 
-/// Saves a screenshot as PNG under Pictures/ShareZ.
+/// Saves a screenshot as PNG under Pictures/ShareZ, never over an existing file.
 pub fn save_image(image: &Frame) -> Result<PathBuf, String> {
-    save_image_to(new_file(glib::UserDirectory::Pictures, "png")?, image)
+    loop {
+        let path = new_file(glib::UserDirectory::Pictures, "png")?;
+        // Another capture can take the name between picking it and creating it: pick again.
+        match File::create_new(&path) {
+            Ok(file) => return write_to(path, file, image),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("Could not save {}: {e}", path.display())),
+        }
+    }
 }
 
-/// Saves a screenshot as PNG where the user chose.
+/// Saves a screenshot as PNG where the user chose, replacing what's there (the file chooser has
+/// already asked).
 pub fn save_image_to(path: PathBuf, image: &Frame) -> Result<PathBuf, String> {
-    write_png(&path, image).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    let file =
+        File::create(&path).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    write_to(path, file, image)
+}
+
+fn write_to(path: PathBuf, file: File, image: &Frame) -> Result<PathBuf, String> {
+    write_png(file, image).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -223,5 +250,22 @@ mod tests {
             gnome_copied_files("file:///home/me/Videos/ShareZ/a%20b.webm"),
             "copy\nfile:///home/me/Videos/ShareZ/a%20b.webm"
         );
+    }
+
+    #[test]
+    fn same_second_names_get_a_number() {
+        let dir = std::env::temp_dir().join(format!("sharez-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = free_name(&dir, "ShareZ_x", "png");
+        assert_eq!(first, dir.join("ShareZ_x.png"));
+        File::create_new(&first).unwrap();
+        let second = free_name(&dir, "ShareZ_x", "png");
+        assert_eq!(second, dir.join("ShareZ_x_2.png"));
+        File::create_new(&second).unwrap();
+        assert_eq!(
+            free_name(&dir, "ShareZ_x", "png"),
+            dir.join("ShareZ_x_3.png")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

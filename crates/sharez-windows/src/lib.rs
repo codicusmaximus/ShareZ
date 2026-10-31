@@ -36,7 +36,7 @@ pub enum Error {
     #[error("I/O: {0}")]
     Io(#[from] std::io::Error),
     #[error("decoding the window image: {0}")]
-    Png(#[from] png::DecodingError),
+    Png(#[from] sharez_core::png::Error),
     #[error("this desktop can't capture single windows")]
     Unsupported,
 }
