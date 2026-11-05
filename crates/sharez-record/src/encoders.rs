@@ -36,6 +36,16 @@ const BITS_PER_PIXEL: f64 = 0.12;
 const MIN_BITRATE: f64 = 2_000_000.0;
 const MAX_BITRATE: f64 = 40_000_000.0;
 
+/// x264 runs at constant quality, but GStreamer's `x264enc` also turns its `bitrate` property
+/// (2048 kbit/s by default) into a VBV cap with a buffer of `vbv-buf-capacity` (600 ms by
+/// default). Left at the defaults that starves the encoder whenever there is a lot of motion:
+/// keyframes are squeezed into the small buffer and come out as a blocky mess, then the frames
+/// after them are starved while the buffer refills. The cap here is only a safety net set far
+/// above what constant quality needs, so quality decides the size.
+const X264_CEILING_BITS_PER_PIXEL: f64 = 1.0;
+const X264_MIN_CEILING: f64 = 20_000_000.0;
+const X264_MAX_CEILING: f64 = 200_000_000.0;
+
 pub(crate) fn has(element: &str) -> bool {
     gst::ElementFactory::find(element).is_some()
 }
@@ -88,7 +98,7 @@ impl Format {
         match self.video {
             Video::X264 => {
                 "x264enc name=venc speed-preset=veryfast tune=zerolatency pass=qual quantizer=21 \
-                 key-int-max=120 threads=0 ! h264parse"
+                 bitrate=50000 vbv-buf-capacity=2000 key-int-max=120 threads=0 ! h264parse"
             }
             Video::OpenH264 => {
                 "openh264enc name=venc usage-type=screen rate-control=bitrate complexity=low \
@@ -138,14 +148,21 @@ impl Format {
 
     /// Sets the encoder's bitrate for the cropped size, where it has one.
     pub(crate) fn set_bitrate(self, encoder: &gst::Element, width: u32, height: u32, fps: u32) {
-        let bits = (f64::from(width) * f64::from(height) * f64::from(fps) * BITS_PER_PIXEL)
-            .clamp(MIN_BITRATE, MAX_BITRATE) as u32;
+        let pixels = f64::from(width) * f64::from(height) * f64::from(fps);
+        let bits = (pixels * BITS_PER_PIXEL).clamp(MIN_BITRATE, MAX_BITRATE) as u32;
         match self.video {
-            Video::X264 => {} // Constant quality, no bitrate.
+            // Constant quality; the bitrate is only the ceiling, in kbit/s.
+            Video::X264 => encoder.set_property("bitrate", x264_ceiling_kbps(pixels)),
             Video::OpenH264 => encoder.set_property("bitrate", bits),
             Video::Vp8 => encoder.set_property("target-bitrate", bits as i32),
         }
     }
+}
+
+/// The x264 VBV ceiling in kbit/s for this many pixels per second.
+fn x264_ceiling_kbps(pixels_per_second: f64) -> u32 {
+    ((pixels_per_second * X264_CEILING_BITS_PER_PIXEL).clamp(X264_MIN_CEILING, X264_MAX_CEILING)
+        / 1000.0) as u32
 }
 
 /// Every installed video encoder, each with the best audio encoder for it.
@@ -177,6 +194,16 @@ mod tests {
         let f = Format::pick(|_| true).unwrap();
         assert!(f.video_encoder().starts_with("x264enc"));
         assert!(f.audio_encoder().starts_with("fdkaacenc"));
+    }
+
+    #[test]
+    fn x264_ceiling_is_far_above_the_old_default() {
+        // The old 2048 kbit/s default cap starved keyframes in recordings with motion.
+        assert_eq!(x264_ceiling_kbps(320.0 * 240.0 * 30.0), 20_000);
+        assert_eq!(x264_ceiling_kbps(2256.0 * 1438.0 * 30.0), 97_323);
+        assert_eq!(x264_ceiling_kbps(7680.0 * 4320.0 * 60.0), 200_000);
+        let f = Format::pick(|_| true).unwrap();
+        assert!(f.video_encoder().contains("vbv-buf-capacity=2000"));
     }
 
     #[test]
