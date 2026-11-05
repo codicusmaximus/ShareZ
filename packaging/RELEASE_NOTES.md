@@ -2,6 +2,9 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
+- **Sharper recordings when lots is moving.** MP4 recordings of scrolling, video or fast window movement could turn blocky, because the encoder was held to a low bitrate. It now spends what the picture needs, so busy recordings stay clear.
+- **Screenshots never replace each other.** Two screenshots or recordings saved in the same second used to share a name, and the second one overwrote the first. The second now gets `_2`, the third `_3`, and so on.
+- **Safer handling of capture data.** ShareZ refuses absurdly large or malformed images instead of trying to load them, and keeps its temporary KDE scripts in your private runtime folder.
 - **KDE recordings show your screen again.** KDE's screen-share picker also offers an empty virtual screen, and once it was picked every recording showed only the wallpaper. ShareZ now notices that and asks again, so pick one of your screens.
 - **Recordings now paste.** When a recording finishes, ShareZ copies the video file itself to the clipboard, so you can paste it into Files, a chat app or an email. On Wayland, pasting used to do nothing. A Record Region hotkey can be set to **Save and Copy** or **Save Only**, and a recording you didn't copy gets a **Copy** button on its notification.
 

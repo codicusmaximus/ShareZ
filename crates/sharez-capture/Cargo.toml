@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
-sharez-core = { version = "0.2.2", path = "../sharez-core" }
+sharez-core = { version = "0.2.3", path = "../sharez-core" }
 thiserror = "2.0.21"
 url = "2.5.8"
 x11rb = "0.14.0"
