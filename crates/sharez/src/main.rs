@@ -3,6 +3,7 @@
 
 mod annotate;
 mod countdown;
+mod file_transfer;
 mod hotkey_settings;
 mod hotkeys;
 mod outline;
@@ -1040,10 +1041,12 @@ async fn flash_and_copy(ui: &Ui, image: Frame) -> Frame {
 /// Puts a file on the clipboard behind an invisible window, which gives ShareZ the focus that
 /// Wayland asks for. For recordings.
 async fn focus_and_copy(ui: &Ui, path: &std::path::Path) {
+    let paths = vec![path.to_owned()];
+    // Before taking focus, so the portal's answer doesn't eat into the moment ShareZ has it.
+    let transfer = file_transfer::start(&paths).await;
     let (tx, rx) = async_channel::bounded(1);
-    let path = path.to_owned();
     overlay::focus(Some(ui.app.upcast_ref()), move || {
-        output::copy_file(&path);
+        output::copy_files(&paths, transfer);
         let _ = tx.try_send(());
     });
     let _ = rx.recv().await;
