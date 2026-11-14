@@ -1,6 +1,6 @@
 // ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first,
 // renders one of them on its own with CaptureWindow, places ShareZ's recording outline with
-// PlaceWindow, and shows ShareZ's icon in the top bar while ShareZ runs. Mutter gives normal Wayland clients neither window positions nor stacking order,
+// PlaceWindow, focuses ShareZ's clipboard window with FocusWindow, and shows ShareZ's icon in the top bar while ShareZ runs. Mutter gives normal Wayland clients neither window positions nor stacking order,
 // nor a way to position their own windows, and GNOME has no tray for them.
 
 import Gio from 'gi://Gio';
@@ -41,6 +41,10 @@ const IFACE = `
       <arg type="i" direction="in" name="width"/>
       <arg type="i" direction="in" name="height"/>
       <arg type="b" direction="out" name="placed"/>
+    </method>
+    <method name="FocusWindow">
+      <arg type="s" direction="in" name="title"/>
+      <arg type="b" direction="out" name="focused"/>
     </method>
   </interface>
 </node>`;
@@ -90,7 +94,7 @@ export default class ShareZHelperExtension extends Extension {
     }
 
     Features() {
-        return ['windows', 'place', 'indicator', 'capture-window'];
+        return ['windows', 'place', 'indicator', 'capture-window', 'focus'];
     }
 
     SetRecording(recording) {
@@ -199,6 +203,20 @@ export default class ShareZHelperExtension extends Extension {
                 w !== win && !w.minimized && w.get_window_type() === Meta.WindowType.NORMAL));
             others.at(-1)?.activate(global.get_current_time());
         }
+        return true;
+    }
+
+    // Gives one of ShareZ's own windows, found by title, the keyboard focus. Mutter only lets the
+    // focused app set the clipboard, and won't focus a new window from an app in the background
+    // (started from this extension's menu, a global shortcut or the tray), so the window ShareZ
+    // opens to copy a recording would otherwise never get it and the copy would be ignored.
+    FocusWindow(title) {
+        const win = global.get_window_actors()
+            .map(a => a.meta_window)
+            .find(w => w.get_title() === title);
+        if (!win)
+            return false;
+        Main.activateWindow(win, global.get_current_time());
         return true;
     }
 }
