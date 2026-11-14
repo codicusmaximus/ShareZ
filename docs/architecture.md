@@ -163,7 +163,12 @@ instance over D-Bus.
 - **Clipboard.** Wayland only lets the focused app set the clipboard, so a screenshot is copied
   while one of ShareZ's windows has focus: the region overlay before it closes, the after-capture
   popup when an answer copies, or, for captures without either, a quick full-screen shutter
-  flash (`overlay::flash`). The clipboard stays served for as long as ShareZ runs.
+  flash (`overlay::flash`). The clipboard stays served for as long as ShareZ runs. A copied recording
+  (`output::copy_files`) is the file, not its bytes: `text/uri-list` (CRLF, percent-encoded),
+  which Discord and Telegram turn into an attachment, plus `x-special/gnome-copied-files`,
+  `application/x-kde-cutselection` and the path as text. For Flatpak and Snap apps it also offers
+  a document portal key (`application/vnd.portal.filetransfer`, from `file_transfer`), started
+  without autostop and stopped once something else takes the clipboard.
 - **Feedback.** With the window open, results are toasts; with it hidden, notifications. A
   screenshot's click opens the image; a recording's shows the file selected in the file manager
   (`GtkFileLauncher` asks `org.freedesktop.FileManager1.ShowItems`), ready to drag. A button on

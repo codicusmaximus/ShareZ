@@ -132,29 +132,125 @@ pub fn show_in_folder(path: &std::path::Path) {
     );
 }
 
-/// Copies a saved file to the clipboard as the file itself, so pasting it in a file manager, a
-/// chat app or a browser's upload box pastes the file. Call it while ShareZ has focus, as with
-/// `copy_frame`.
-pub fn copy_file(path: &std::path::Path) {
+/// Copies saved files to the clipboard as the files themselves, so pasting them in a chat app
+/// (Discord, Telegram), a browser's upload box or a file manager attaches the files. Call it while
+/// ShareZ has focus, as with `copy_frame`. `transfer` is the portal key for the same files, from
+/// `file_transfer::start`, for sandboxed apps; the clipboard stops it once it is replaced.
+///
+/// The clipboard holds where the files are, not their bytes: whoever pastes reads them from disk,
+/// so they must stay where they are, and ShareZ keeps serving the clipboard while it runs.
+pub fn copy_files(paths: &[PathBuf], transfer: Option<String>) {
     let Some(display) = gdk::Display::default() else {
+        if let Some(key) = transfer {
+            crate::file_transfer::stop(key);
+        }
         return;
     };
-    let file = gio::File::for_path(path);
-    // GTK offers a file list as text/uri-list (browsers, Electron and Qt apps, Dolphin), the
-    // portal's file transfer (sandboxed apps) and the path as text. GNOME's Files and other GTK 3
-    // file managers want their own target on top.
-    let files = gdk::FileList::from_array(std::slice::from_ref(&file));
-    let gnome = glib::Bytes::from_owned(gnome_copied_files(&file.uri()).into_bytes());
-    let content = gdk::ContentProvider::new_union(&[
-        gdk::ContentProvider::for_value(&files.to_value()),
-        gdk::ContentProvider::for_bytes("x-special/gnome-copied-files", &gnome),
-    ]);
-    display.clipboard().set_content(Some(&content)).ok();
+    let formats = match FileFormats::new(paths) {
+        Ok(formats) => formats,
+        Err(e) => {
+            eprintln!("Could not copy {e}");
+            if let Some(key) = transfer {
+                crate::file_transfer::stop(key);
+            }
+            return;
+        }
+    };
+    let bytes = |mime: &str, data: String| {
+        gdk::ContentProvider::for_bytes(mime, &glib::Bytes::from_owned(data.into_bytes()))
+    };
+    // text/uri-list is what Discord, Telegram, browsers and Qt apps read; GNOME's Files and other
+    // GTK file managers want their own target, and Dolphin wants to know it's a copy, not a cut.
+    let mut providers = vec![
+        bytes("text/uri-list", formats.uri_list),
+        bytes("x-special/gnome-copied-files", formats.gnome),
+        bytes("application/x-kde-cutselection", "0".to_owned()),
+    ];
+    if let Some(key) = &transfer {
+        providers.push(bytes(PORTAL_MIME, key.clone()));
+    }
+    // A string offers text/plain;charset=utf-8 and text/plain (and on X11 UTF8_STRING and the
+    // rest), so pasting into a text box gives the path.
+    providers.push(gdk::ContentProvider::for_value(&formats.text.to_value()));
+    let content = gdk::ContentProvider::new_union(&providers);
+    let clipboard = display.clipboard();
+    hold_transfer(&clipboard, &content, transfer);
+    if let Err(e) = clipboard.set_content(Some(&content)) {
+        eprintln!("Could not set the clipboard: {e}");
+    }
 }
 
-/// The `x-special/gnome-copied-files` form of a copied file: the operation, then its URI.
-fn gnome_copied_files(uri: &str) -> String {
-    format!("copy\n{uri}")
+/// What a sandboxed app reads to get the files through the document portal.
+const PORTAL_MIME: &str = "application/vnd.portal.filetransfer";
+
+/// Copied files in the forms the clipboard offers them in, the way file managers and Qt copy them.
+#[derive(Debug, PartialEq, Eq)]
+struct FileFormats {
+    /// `text/uri-list`: each file's percent-encoded `file://` URI, each line ended with CRLF.
+    uri_list: String,
+    /// `x-special/gnome-copied-files`: `copy`, then the URIs, a line each, with no newline at the
+    /// end.
+    gnome: String,
+    /// `text/plain`: the bare paths, a line each, with no newline at the end.
+    text: String,
+}
+
+impl FileFormats {
+    fn new(paths: &[PathBuf]) -> Result<Self, String> {
+        let uris = paths
+            .iter()
+            .map(|p| {
+                glib::filename_to_uri(p, None)
+                    .map(String::from)
+                    .map_err(|e| format!("{}: {e}", p.display()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let uri_list = uris.iter().flat_map(|u| [u.as_str(), "\r\n"]).collect();
+        let gnome = std::iter::once("copy")
+            .chain(uris.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = paths
+            .iter()
+            .map(|p| p.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(Self {
+            uri_list,
+            gnome,
+            text,
+        })
+    }
+}
+
+thread_local! {
+    /// The clipboard content ShareZ set with a portal transfer, and the transfer's key.
+    static TRANSFER: std::cell::RefCell<Option<(gdk::ContentProvider, String)>> =
+        const { std::cell::RefCell::new(None) };
+    /// Whether `TRANSFER` is watching the clipboard yet.
+    static WATCHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps `key`'s transfer going while `content` is on the clipboard, and stops the one before.
+fn hold_transfer(clipboard: &gdk::Clipboard, content: &gdk::ContentProvider, key: Option<String>) {
+    if let Some((_, old)) = TRANSFER.take() {
+        crate::file_transfer::stop(old);
+    }
+    let Some(key) = key else {
+        return;
+    };
+    TRANSFER.set(Some((content.clone(), key)));
+    if !WATCHING.replace(true) {
+        clipboard.connect_changed(|clipboard| {
+            let replaced = TRANSFER.with_borrow(|held| {
+                held.as_ref()
+                    .is_some_and(|(ours, _)| clipboard.content().as_ref() != Some(ours))
+            });
+            if replaced && let Some((_, key)) = TRANSFER.take() {
+                crate::file_transfer::stop(key);
+            }
+        });
+    }
 }
 
 fn write_png(file: File, image: &Frame) -> Result<(), String> {
@@ -245,11 +341,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copied_files_are_offered_the_way_gnome_files_pastes_them() {
+    fn a_copied_file_is_offered_the_way_discord_and_file_managers_paste_it() {
+        let formats =
+            FileFormats::new(&[PathBuf::from("/home/me/Videos/ShareZ/ShareZ_1.mp4")]).unwrap();
         assert_eq!(
-            gnome_copied_files("file:///home/me/Videos/ShareZ/a%20b.webm"),
-            "copy\nfile:///home/me/Videos/ShareZ/a%20b.webm"
+            formats,
+            FileFormats {
+                uri_list: "file:///home/me/Videos/ShareZ/ShareZ_1.mp4\r\n".into(),
+                gnome: "copy\nfile:///home/me/Videos/ShareZ/ShareZ_1.mp4".into(),
+                text: "/home/me/Videos/ShareZ/ShareZ_1.mp4".into(),
+            }
         );
+    }
+
+    #[test]
+    fn copied_files_are_percent_encoded_one_a_line() {
+        let formats = FileFormats::new(&[
+            PathBuf::from("/home/me/a.mp4"),
+            PathBuf::from("/home/me/My Clip #2 é.mp4"),
+        ])
+        .unwrap();
+        assert_eq!(
+            formats.uri_list,
+            "file:///home/me/a.mp4\r\nfile:///home/me/My%20Clip%20%232%20%C3%A9.mp4\r\n"
+        );
+        assert_eq!(
+            formats.gnome,
+            "copy\nfile:///home/me/a.mp4\nfile:///home/me/My%20Clip%20%232%20%C3%A9.mp4"
+        );
+        assert_eq!(formats.text, "/home/me/a.mp4\n/home/me/My Clip #2 é.mp4");
+    }
+
+    #[test]
+    fn only_absolute_paths_can_be_copied() {
+        assert!(FileFormats::new(&[PathBuf::from("a.mp4")]).is_err());
     }
 
     #[test]
