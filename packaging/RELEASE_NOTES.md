@@ -2,6 +2,7 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
+- **Recordings paste into Discord and Telegram.** Pasting a copied recording into Discord, Telegram or some Flatpak apps did not attach the video. ShareZ now offers the file the way those apps expect, so it arrives as an attachment you can send.
 - **Sharper recordings when lots is moving.** MP4 recordings of scrolling, video or fast window movement could turn blocky, because the encoder was held to a low bitrate. It now spends what the picture needs, so busy recordings stay clear.
 - **Screenshots never replace each other.** Two screenshots or recordings saved in the same second used to share a name, and the second one overwrote the first. The second now gets `_2`, the third `_3`, and so on.
 - **Safer handling of capture data.** ShareZ refuses absurdly large or malformed images instead of trying to load them, and keeps its temporary KDE scripts in your private runtime folder.
