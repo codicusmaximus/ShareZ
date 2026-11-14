@@ -56,6 +56,13 @@ pub async fn place(title: &str, rect: Rect) -> Result<bool> {
     .await
 }
 
+/// Asks the helper extension to give a window of ours, found by title, the keyboard focus.
+/// `Ok(false)` if the window isn't there yet; an error from helpers without `focus`.
+pub async fn focus(title: &str) -> Result<bool> {
+    let conn = Connection::session().await?;
+    call(&conn, HELPER, HELPER_PATH, HELPER, "FocusWindow", &(title,)).await
+}
+
 /// What the installed helper extension can do; empty without it. Versions before the top-bar
 /// icon have no `Features` method, so they also answer empty.
 pub async fn helper_features() -> Vec<String> {

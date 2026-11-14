@@ -193,7 +193,8 @@ GNOME doesn't let normal apps see which window is on top. Without help ShareZ gu
 highlight a window that is behind another one, and has nowhere for a tray icon. The small ShareZ
 Helper shell extension in [`gnome-extension/`](gnome-extension/) tells it the real stacking order
 and exact window edges, captures a clicked window even where others cover it, places the outline
-around a region being recorded, and shows ShareZ's top-bar icon. The packages and `./install.sh`
+around a region being recorded, shows ShareZ's top-bar icon, and gives ShareZ the focus GNOME
+requires to copy a finished recording to the clipboard. The packages and `./install.sh`
 install it, and ShareZ turns it on when it starts (GNOME only sees a newly installed extension
 after you log out and back in). To install it by hand (again after updating ShareZ):
 

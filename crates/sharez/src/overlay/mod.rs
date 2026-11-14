@@ -415,7 +415,7 @@ fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl F
         .vexpand(true)
         .build();
     let window = gtk::Window::builder()
-        .title("ShareZ Flash")
+        .title(COVER_TITLE)
         .decorated(false)
         .css_classes(["sharez-flash"])
         .child(&light)
@@ -468,4 +468,36 @@ fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl F
 
     window.fullscreen();
     window.present();
+    ask_shell_for_focus(&window);
+}
+
+/// The cover's title, which the GNOME helper finds it by.
+const COVER_TITLE: &str = "ShareZ Flash";
+
+/// On GNOME, asks the ShareZ Helper extension to focus `window`. Mutter won't focus a new window
+/// from an app in the background, which is where ShareZ is when a recording is stopped from the
+/// top bar, a shortcut or the tray, and then the clipboard can't be set. Keeps asking until the
+/// window shows up in the shell, gets focus or closes; does nothing without the extension.
+fn ask_shell_for_focus(window: &gtk::Window) {
+    let on_gnome_wayland = sharez_core::Session::detect().is_some_and(|s| {
+        s.display == sharez_core::DisplayServer::Wayland && s.desktop == sharez_core::Desktop::Gnome
+    });
+    if !on_gnome_wayland {
+        return;
+    }
+    let window = window.downgrade();
+    glib::spawn_future_local(async move {
+        let started = Instant::now();
+        while started.elapsed() < FOCUS_WAIT {
+            let Some(w) = window.upgrade() else { return };
+            if w.is_active() {
+                return;
+            }
+            drop(w);
+            if sharez_windows::helper_focus(COVER_TITLE).await.is_err() {
+                return; // No helper, or one too old to focus windows.
+            }
+            glib::timeout_future(Duration::from_millis(30)).await;
+        }
+    });
 }
