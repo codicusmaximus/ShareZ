@@ -524,7 +524,18 @@ fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl F
         glib::clone!(
             #[strong]
             run,
-            move || run()
+            #[strong]
+            done,
+            move || {
+                if done.borrow().is_some() {
+                    // Wayland ignores a clipboard set without focus, so the copy likely fails.
+                    eprintln!(
+                        "ShareZ didn't get the focus within {FOCUS_WAIT:?}; \
+                         the clipboard may keep what it had."
+                    );
+                }
+                run();
+            }
         ),
     );
     // Fade out, then close once `done` has run.
@@ -572,8 +583,10 @@ fn ask_shell_for_focus(window: &gtk::Window) {
                 return;
             }
             drop(w);
-            if sharez_windows::helper_focus(COVER_TITLE).await.is_err() {
-                return; // No helper, or one too old to focus windows.
+            if let Err(e) = sharez_windows::helper_focus(COVER_TITLE).await {
+                // No helper, or one too old to focus windows.
+                eprintln!("The ShareZ Helper couldn't focus the copy window: {e}");
+                return;
             }
             glib::timeout_future(Duration::from_millis(30)).await;
         }
