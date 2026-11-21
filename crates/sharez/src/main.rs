@@ -674,7 +674,7 @@ async fn start_services(ui: Rc<Ui>) {
     let tray_ui = ui.clone();
     glib::spawn_future_local(async move {
         let (tx, rx) = async_channel::unbounded::<tray::Action>();
-        let tray = Tray::start(&session, tx).await;
+        let tray = Tray::start(&session, &tray_ui.app, tx).await;
         if tray.is_none() {
             eprintln!("No tray: open the ShareZ window by starting ShareZ again.");
         }
