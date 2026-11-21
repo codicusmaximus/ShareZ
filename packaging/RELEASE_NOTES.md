@@ -2,9 +2,9 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
-- **Recordings copy on GNOME 51.** On Fedora 45 a finished recording often wasn't copied, because GNOME wouldn't give ShareZ's copy window focus and Wayland ignores a clipboard set without it. ShareZ now gets focus reliably before copying.
+- **Recordings copy on GNOME 51.** On Fedora 45 a finished recording often wasn't copied, because GNOME wouldn't give ShareZ's copy window focus and Wayland ignores a clipboard set without it. ShareZ now gets focus reliably before copying. Log out and back in once after upgrading so GNOME loads the updated extension.
 - **A warning when an old helper is in the way.** An old copy of ShareZ's GNOME extension in `~/.local/share` (from `install.sh` or a hand install) hides the packaged one, and GNOME refuses to load it once it's out of date. The recording outline, copying recordings and window snapping then quietly stopped working. ShareZ now shows a notification naming the folder to delete.
-- **The Print key works as a hotkey label on GNOME.** A shortcut with no modifier, like plain Print, no longer shows a GTK warning.
+- **Plain-key hotkeys work inside the ShareZ window.** A hotkey set to a key with no modifier, like Print, now also works while the ShareZ window is focused.
 - **Move a region while you draw it.** Hold Ctrl while dragging out a region to move the whole box with the pointer, with a magnifier on every corner so you can line up each edge. Let go of Ctrl to keep resizing from where you moved it.
 - **Alt sends a capture straight to the annotator.** Hold Alt as you release the mouse and the screenshot opens in the annotator instead of doing the hotkey's usual step.
 - **Recording outline works on GNOME 51.** Fedora 45's GNOME refused to load ShareZ's top-bar extension, so the outline around a recording disappeared. ShareZ now supports it.
