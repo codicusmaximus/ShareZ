@@ -27,3 +27,10 @@ pub fn mark(step: &str) {
         );
     }
 }
+
+/// Prints `what` when timing is on, for following steps that aren't part of a capture.
+pub fn note(what: &str) {
+    if *ENABLED {
+        eprintln!("[timing] {what}");
+    }
+}

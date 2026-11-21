@@ -574,19 +574,35 @@ fn ask_shell_for_focus(window: &gtk::Window) {
     if !on_gnome_wayland {
         return;
     }
+    let started = Instant::now();
+    window.connect_is_active_notify(move |w| {
+        crate::timing::note(&format!(
+            "copy window active={} after {:?}",
+            w.is_active(),
+            started.elapsed()
+        ));
+    });
+    window.connect_map(move |_| {
+        crate::timing::note(&format!("copy window mapped after {:?}", started.elapsed()));
+    });
     let window = window.downgrade();
     glib::spawn_future_local(async move {
-        let started = Instant::now();
         while started.elapsed() < FOCUS_WAIT {
             let Some(w) = window.upgrade() else { return };
             if w.is_active() {
                 return;
             }
             drop(w);
-            if let Err(e) = sharez_windows::helper_focus(COVER_TITLE).await {
-                // No helper, or one too old to focus windows.
-                eprintln!("The ShareZ Helper couldn't focus the copy window: {e}");
-                return;
+            match sharez_windows::helper_focus(COVER_TITLE).await {
+                Ok(found) => crate::timing::note(&format!(
+                    "helper focus: window found={found} after {:?}",
+                    started.elapsed()
+                )),
+                Err(e) => {
+                    // No helper, or one too old to focus windows.
+                    eprintln!("The ShareZ Helper couldn't focus the copy window: {e}");
+                    return;
+                }
             }
             glib::timeout_future(Duration::from_millis(30)).await;
         }
