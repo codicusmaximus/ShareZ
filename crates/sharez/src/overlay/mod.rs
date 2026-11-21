@@ -455,6 +455,9 @@ impl Snapper {
 const FLASH: Duration = Duration::from_millis(250);
 /// How long the flash waits for focus before going on without it.
 const FOCUS_WAIT: Duration = Duration::from_millis(600);
+/// The same for a finished recording, where nothing shows and a later copy beats none. GNOME 51
+/// can take over half a second to show a new fullscreen window, and only a shown one gets focus.
+const RECORDING_FOCUS_WAIT: Duration = Duration::from_secs(3);
 
 type Flashed = Box<dyn FnOnce()>;
 
@@ -462,18 +465,24 @@ type Flashed = Box<dyn FnOnce()>;
 /// runs once the flash has focus (or it waited long enough), so `done` can set the clipboard on
 /// Wayland, where only the focused app may.
 pub fn flash(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
-    cover(app, 0.5, FLASH, done);
+    cover(app, 0.5, FLASH, FOCUS_WAIT, done);
 }
 
 /// The same without the flash: an invisible window takes focus just long enough for `done` to
 /// set the clipboard. For recordings, which have nothing to flash about.
 pub fn focus(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
-    cover(app, 0.0, Duration::ZERO, done);
+    cover(app, 0.0, Duration::ZERO, RECORDING_FOCUS_WAIT, done);
 }
 
 /// A window over the whole screen, `peak` white fading out over `fade`, that runs `done` once it
-/// has focus.
-fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl FnOnce() + 'static) {
+/// has focus, or after `wait` without it.
+fn cover(
+    app: Option<&gtk::Application>,
+    peak: f64,
+    fade: Duration,
+    wait: Duration,
+    done: impl FnOnce() + 'static,
+) {
     let css = gtk::CssProvider::new();
     css.load_from_string(
         "window.sharez-flash { background: transparent; }
@@ -520,7 +529,7 @@ fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl F
         }
     ));
     glib::timeout_add_local_once(
-        FOCUS_WAIT,
+        wait,
         glib::clone!(
             #[strong]
             run,
@@ -530,7 +539,7 @@ fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl F
                 if done.borrow().is_some() {
                     // Wayland ignores a clipboard set without focus, so the copy likely fails.
                     eprintln!(
-                        "ShareZ didn't get the focus within {FOCUS_WAIT:?}; \
+                        "ShareZ didn't get the focus within {wait:?}; \
                          the clipboard may keep what it had."
                     );
                 }
@@ -557,7 +566,7 @@ fn cover(app: Option<&gtk::Application>, peak: f64, fade: Duration, done: impl F
 
     window.fullscreen();
     window.present();
-    ask_shell_for_focus(&window);
+    ask_shell_for_focus(&window, wait);
 }
 
 /// The cover's title, which the GNOME helper finds it by.
@@ -567,7 +576,7 @@ const COVER_TITLE: &str = "ShareZ Flash";
 /// from an app in the background, which is where ShareZ is when a recording is stopped from the
 /// top bar, a shortcut or the tray, and then the clipboard can't be set. Keeps asking until the
 /// window shows up in the shell, gets focus or closes; does nothing without the extension.
-fn ask_shell_for_focus(window: &gtk::Window) {
+fn ask_shell_for_focus(window: &gtk::Window, wait: Duration) {
     let on_gnome_wayland = sharez_core::Session::detect().is_some_and(|s| {
         s.display == sharez_core::DisplayServer::Wayland && s.desktop == sharez_core::Desktop::Gnome
     });
@@ -587,7 +596,7 @@ fn ask_shell_for_focus(window: &gtk::Window) {
     });
     let window = window.downgrade();
     glib::spawn_future_local(async move {
-        while started.elapsed() < FOCUS_WAIT {
+        while started.elapsed() < wait {
             let Some(w) = window.upgrade() else { return };
             if w.is_active() {
                 return;
