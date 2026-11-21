@@ -258,7 +258,7 @@ export default class ShareZHelperExtension extends Extension {
         if (hadFocus) {
             const others = global.display.sort_windows_by_stacking(windows.filter(w =>
                 w !== win && !w.minimized && w.get_window_type() === Meta.WindowType.NORMAL));
-            others.at(-1)?.activate(global.get_current_time());
+            others.at(-1)?.activate(global.display.get_current_time_roundtrip());
         }
         return true;
     }
@@ -273,7 +273,14 @@ export default class ShareZHelperExtension extends Extension {
             .find(w => w.get_title() === title);
         if (!win)
             return false;
-        Main.activateWindow(win, global.get_current_time());
+        // Called over D-Bus there is no current event, so global.get_current_time() is the last
+        // event the shell handled, often the very key press that stopped the recording. Mutter
+        // counts an activation that old as focus stealing and only marks the window as wanting
+        // attention ("… is ready"). A fresh timestamp from the display server passes.
+        const time = global.display.get_current_time_roundtrip();
+        Main.activateWindow(win, time);
+        if (global.display.focus_window !== win)
+            win.focus(time);
         return true;
     }
 }
