@@ -335,8 +335,10 @@ impl Trigger {
 /// A desktop's description of a trigger, for people. GNOME says `Press <Control>Print`, in GTK
 /// accelerator syntax; that becomes `Ctrl+Print`. Anything else is shown as it is.
 pub fn readable(description: &str) -> String {
-    let mut rest = description.strip_prefix("Press ").unwrap_or(description);
-    if !rest.starts_with('<') {
+    let pressed = description.strip_prefix("Press ");
+    let mut rest = pressed.unwrap_or(description);
+    // `Press Print`, with no modifiers, is a key on its own.
+    if pressed.is_none() && !rest.starts_with('<') {
         return description.to_owned();
     }
     let mut parts = Vec::new();
@@ -355,7 +357,7 @@ pub fn readable(description: &str) -> String {
         });
         rest = after;
     }
-    if rest.is_empty() {
+    if rest.is_empty() || rest.contains(char::is_whitespace) {
         return description.to_owned();
     }
     parts.push(rest);
@@ -596,6 +598,12 @@ mod tests {
     #[test]
     fn gnome_descriptions_become_labels() {
         assert_eq!(readable("Press <Control>Print"), "Ctrl+Print");
+        assert_eq!(readable("Press Print"), "Print");
+        assert_eq!(
+            gtk_accel(&readable("Press Print")).as_deref(),
+            Some("Print")
+        );
+        assert_eq!(readable("Press and hold"), "Press and hold");
         assert_eq!(readable("Press <Shift><Control>Print"), "Shift+Ctrl+Print");
         assert_eq!(readable("Meta+Shift+R"), "Meta+Shift+R");
     }
