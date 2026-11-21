@@ -106,7 +106,8 @@ Capture works like ShareX's region capture:
 |---|---|
 | Drag | A region, with a magnified pixel grid around the cursor |
 | Shift while dragging | A square region |
-| Ctrl while dragging | Move the region instead of resizing it |
+| Ctrl while dragging | Move the region instead of resizing it, with a magnifier on each corner |
+| Alt when you let go | Open the region in the annotator instead of the usual after-capture step |
 | Click without dragging | The highlighted window, or the button, panel or field inside it, even where other windows cover it |
 | Scroll | Zoom the magnifier in or out |
 | Space | The whole screen |
