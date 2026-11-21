@@ -468,11 +468,15 @@ pub fn flash(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
     cover(app, 0.5, FLASH, FOCUS_WAIT, done);
 }
 
-/// The same without the flash: an invisible window takes focus just long enough for `done` to
-/// set the clipboard. For recordings, which have nothing to flash about.
+/// The same without the flash: a window too faint to notice takes focus just long enough for
+/// `done` to set the clipboard. For recordings, which have nothing to flash about.
 pub fn focus(app: Option<&gtk::Application>, done: impl FnOnce() + 'static) {
-    cover(app, 0.0, Duration::ZERO, RECORDING_FOCUS_WAIT, done);
+    cover(app, FAINT, Duration::ZERO, RECORDING_FOCUS_WAIT, done);
 }
+
+/// The focus window's white, a few levels above nothing. GNOME 51 never shows a window that has
+/// drawn only transparent pixels, and a window it hasn't shown can't get focus.
+const FAINT: f64 = 0.02;
 
 /// A window over the whole screen, `peak` white fading out over `fade`, that runs `done` once it
 /// has focus, or after `wait` without it.
@@ -552,7 +556,8 @@ fn cover(
     let fading = window.clone();
     glib::timeout_add_local(Duration::from_millis(16), move || {
         let t = if fade.is_zero() {
-            1.0
+            // No fade: stay as drawn until `done` has run.
+            if done.borrow().is_some() { 0.0 } else { 1.0 }
         } else {
             started.elapsed().as_secs_f64() / fade.as_secs_f64()
         };
