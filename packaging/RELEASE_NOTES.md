@@ -2,6 +2,8 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
+- **Screenshots start much faster on GNOME.** The region overlay used to take a couple of seconds to appear on a big or busy screen, because GNOME encoded the whole screen as one image before ShareZ could show it. ShareZ's top-bar extension now grabs the screen itself, split into pieces that are prepared at the same time, and the overlay no longer waits for slow apps before it lets you pick a window. Log out and back in once after upgrading so GNOME loads the updated extension.
+- **Recordings copy on GNOME.** Stopping a recording from the top bar, a shortcut or the tray sometimes left the clipboard holding whatever was there before. The copied recording now always lands on the clipboard.
 - **Recordings paste into Discord and Telegram.** Pasting a copied recording into Discord, Telegram or some Flatpak apps did not attach the video. ShareZ now offers the file the way those apps expect, so it arrives as an attachment you can send.
 - **Sharper recordings when lots is moving.** MP4 recordings of scrolling, video or fast window movement could turn blocky, because the encoder was held to a low bitrate. It now spends what the picture needs, so busy recordings stay clear.
 - **Screenshots never replace each other.** Two screenshots or recordings saved in the same second used to share a name, and the second one overwrote the first. The second now gets `_2`, the third `_3`, and so on.
