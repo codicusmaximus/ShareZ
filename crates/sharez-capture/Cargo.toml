@@ -8,13 +8,16 @@ repository.workspace = true
 
 [dependencies]
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
+async-io = "2.6.0"
+futures-lite = "2.6.1"
 sharez-core = { version = "0.2.4", path = "../sharez-core" }
 thiserror = "2.0.21"
 url = "2.5.8"
+zbus = { version = "5.13.2", default-features = false, features = ["async-io"] }
 x11rb = "0.14.0"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-futures-lite = "2.6.1"
+png = { version = "0.18.1", default-features = false }

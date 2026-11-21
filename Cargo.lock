@@ -1445,11 +1445,14 @@ name = "sharez-capture"
 version = "0.2.4"
 dependencies = [
  "ashpd",
+ "async-io",
  "futures-lite",
+ "png",
  "sharez-core",
  "thiserror",
  "url",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]
