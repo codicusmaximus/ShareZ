@@ -192,7 +192,8 @@ sudo dnf install pipewire-gstreamer gstreamer1-plugins-good gstreamer1-plugins-b
 GNOME doesn't let normal apps see which window is on top. Without help ShareZ guesses, and can
 highlight a window that is behind another one, and has nowhere for a tray icon. The small ShareZ
 Helper shell extension in [`gnome-extension/`](gnome-extension/) tells it the real stacking order
-and exact window edges, captures a clicked window even where others cover it, places the outline
+and exact window edges, freezes the screen for the region overlay several times faster than
+GNOME's screenshot portal, captures a clicked window even where others cover it, places the outline
 around a region being recorded, shows ShareZ's top-bar icon, and gives ShareZ the focus GNOME
 requires to copy a finished recording to the clipboard. The packages and `./install.sh`
 install it, and ShareZ turns it on when it starts (GNOME only sees a newly installed extension
@@ -227,6 +228,11 @@ gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
 **Hotkeys say "Unavailable".** The desktop has no global shortcuts portal (GNOME before 48, for
 example). The window says why. `sharez --hotkey ID`, `sharez --capture` and `sharez --record`
 still work from your desktop's own custom shortcuts.
+
+**The region overlay takes a while to appear.** On GNOME, make sure the ShareZ Helper extension
+is installed, on, and up to date (log out and back in after updating ShareZ): without it GNOME's
+screenshot portal encodes the whole screen as one PNG first, which takes seconds on a busy 4K
+screen. To see where the time goes, start ShareZ with `SHAREZ_TIMING=1 sharez` from a terminal.
 
 ## Building
 

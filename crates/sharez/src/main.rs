@@ -12,6 +12,7 @@ mod overlay;
 mod permissions;
 mod popup;
 mod settings;
+mod timing;
 mod tray;
 mod x11keys;
 
@@ -26,7 +27,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use sharez_core::{DisplayServer, Frame, PixelRect, Session};
 use sharez_record::{Audio, Format, Options, Recorder, Stop};
-use sharez_windows::{Elements, Target};
+use sharez_windows::Elements;
 
 use hotkey_settings::{HotkeyList, KeyState};
 use hotkeys::{After, Capture, Hotkey, Shortcuts};
@@ -193,6 +194,9 @@ struct Ui {
     stop: RefCell<Option<async_channel::Sender<Stop>>>,
     /// Set while the region picker is open, so a second shortcut press doesn't open another.
     busy: Cell<bool>,
+    /// Whether the capture being started came from a menu (the tray, the top bar, ShareZ's
+    /// window), which needs a moment to close before the screen is captured. Hotkeys don't.
+    from_menu: Cell<bool>,
     /// Quit once the running recording has been saved.
     quit_after: Cell<bool>,
     tray: RefCell<Option<Tray>>,
@@ -439,6 +443,7 @@ fn build_window(app: &adw::Application) -> Rc<Ui> {
         settings: RefCell::new(settings),
         stop: RefCell::new(None),
         busy: Cell::new(false),
+        from_menu: Cell::new(true),
         quit_after: Cell::new(false),
         tray: RefCell::new(None),
         shortcuts: RefCell::new(None),
@@ -455,12 +460,14 @@ fn add_actions(ui: &Rc<Ui>) {
         a.connect_activate(move |_, _| run(&ui));
     }
     add(ui, "capture", |ui| {
+        ui.from_menu.set(true);
         let ui = ui.clone();
         glib::spawn_future_local(async move {
             screenshot(&ui, Capture::Region, After::SaveAndCopy).await;
         });
     });
     add(ui, "capture-screen", |ui| {
+        ui.from_menu.set(true);
         let ui = ui.clone();
         glib::spawn_future_local(async move {
             screenshot(&ui, Capture::Screen, After::SaveAndCopy).await;
@@ -488,7 +495,10 @@ fn add_actions(ui: &Rc<Ui>) {
             Err(e) => ui.fail("Could Not Open the Image", &e),
         }
     });
-    add(ui, "record", |ui| record(ui, true));
+    add(ui, "record", |ui| {
+        ui.from_menu.set(true);
+        record(ui, true);
+    });
     add(ui, "stop-recording", |ui| {
         ui.stop(Stop::Save);
     });
@@ -634,6 +644,7 @@ fn run_hotkey(ui: &Rc<Ui>, id: &str) {
         eprintln!("No hotkey {id}");
         return;
     };
+    ui.from_menu.set(false);
     if hotkey.capture == Capture::Record {
         record(ui, hotkey.after.for_capture(Capture::Record).copies());
         return;
@@ -923,10 +934,18 @@ enum Purpose {
 }
 
 /// Hides ShareZ's window and gives the compositor a moment to remove it, or the tray menu that
-/// started this, before the screen is captured.
+/// started this, before the screen is captured. A hotkey pressed while ShareZ is in the
+/// background has nothing to wait for.
 async fn get_out_of_the_way(ui: &Ui) {
+    let showing = ui
+        .app
+        .windows()
+        .iter()
+        .any(gtk::prelude::WidgetExt::is_visible);
     ui.window.set_visible(false);
-    glib::timeout_future(Duration::from_millis(200)).await;
+    if showing || ui.from_menu.get() {
+        glib::timeout_future(Duration::from_millis(200)).await;
+    }
 }
 
 /// A frozen frame, or `None` if the desktop refused (the window then asks for permission).
@@ -960,26 +979,38 @@ async fn freeze_screen(ui: &Ui) -> Result<Option<Frame>, String> {
 async fn select_region(ui: &Ui, purpose: Purpose) -> Result<Option<Picked>, String> {
     let session = Session::detect().ok_or("No display server found.")?;
     get_out_of_the_way(ui).await;
-    let (frame, windows, elements) = futures_util::join!(
-        sharez_capture::Backend::for_session(&session).freeze(),
-        list_windows_for(&session),
-        Elements::snapshot(),
+    timing::mark("out of the way");
+    // Not waited for: the overlay takes the accessibility trees whenever they arrive.
+    let elements = glib::spawn_future_local(async {
+        let elements = Elements::snapshot()
+            .await
+            .inspect_err(|e| eprintln!("No accessibility data, so no element snapping: {e}"))
+            .ok();
+        timing::mark("accessibility read");
+        elements
+    });
+    let (frame, windows) = futures_util::join!(
+        async {
+            let frame = sharez_capture::Backend::for_session(&session)
+                .freeze()
+                .await;
+            timing::mark("screen frozen");
+            frame
+        },
+        async {
+            let windows = list_windows_for(&session).await;
+            timing::mark("windows listed");
+            windows
+        },
     );
     let Some(frame) = frozen(ui, frame).await? else {
         return Ok(None);
     };
-    let elements = elements
-        .inspect_err(|e| eprintln!("No accessibility data, so no element snapping: {e}"))
-        .ok();
-    let targets = match &elements {
-        Some(e) => e.targets(windows),
-        None => windows.into_iter().map(Target::opaque).collect(),
-    };
     let screen = (frame.width, frame.height);
     let snapshot = overlay::Snapshot {
         frame: frame.clone(),
-        targets,
-        elements,
+        windows,
+        elements: Box::pin(async move { elements.await.ok().flatten() }),
         // A recording films the screen, so it shows whatever covers the window anyway.
         window_pixels: purpose != Purpose::Record,
     };
@@ -1009,10 +1040,12 @@ async fn allow_screenshots(ui: &Rc<Ui>) {
     let Some(session) = Session::detect() else {
         return;
     };
-    match sharez_capture::Backend::for_session(&session)
-        .freeze()
-        .await
-    {
+    // The portal itself, which is what asks: the GNOME helper would answer without asking.
+    let backend = match sharez_capture::Backend::for_session(&session) {
+        sharez_capture::Backend::Gnome => sharez_capture::Backend::Portal,
+        backend => backend,
+    };
+    match backend.freeze().await {
         Ok(_) => {
             ui.banner.set_revealed(false);
             ui.toasts.add_toast(adw::Toast::new(
@@ -1094,6 +1127,7 @@ async fn screenshot(ui: &Rc<Ui>, capture: Capture, after: After) {
     if ui.stop.borrow().is_some() || ui.busy.replace(true) {
         return;
     }
+    timing::start(&format!("{capture:?} screenshot"));
     let shown = ui.window.is_visible();
     let taken = take(ui, capture, after.copies()).await;
     ui.busy.set(false);

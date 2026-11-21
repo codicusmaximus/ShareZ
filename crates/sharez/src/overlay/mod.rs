@@ -5,6 +5,8 @@ mod view;
 
 use std::{
     cell::{Cell, RefCell},
+    future::Future,
+    pin::Pin,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -20,12 +22,18 @@ use view::View;
 /// capture can't also end it (ShareX does the same).
 const INPUT_DELAY: Duration = Duration::from_millis(500);
 
+/// The apps' accessibility trees, still being read.
+pub type LateElements = Pin<Box<dyn Future<Output = Option<Elements>>>>;
+
 /// Everything captured before the overlay opens.
 pub struct Snapshot {
     pub frame: Frame,
     /// Windows topmost first, in logical screen coordinates.
-    pub targets: Vec<Target>,
-    pub elements: Option<Elements>,
+    pub windows: Vec<Window>,
+    /// Reading every app's accessibility tree can take a while (an app that doesn't answer costs
+    /// a D-Bus timeout), so the overlay opens without them and snaps inside windows once they
+    /// arrive.
+    pub elements: LateElements,
     /// Take a picked window's own pixels, so windows in front of it don't show.
     pub window_pixels: bool,
 }
@@ -56,7 +64,7 @@ pub fn show(
 ) {
     let Snapshot {
         frame,
-        targets,
+        windows,
         elements,
         window_pixels,
     } = snapshot;
@@ -76,8 +84,8 @@ pub fn show(
     window.set_application(app);
 
     let snapper = Rc::new(Snapper {
-        targets,
-        elements,
+        targets: RefCell::new(windows.iter().cloned().map(Target::opaque).collect()),
+        elements: RefCell::new(None),
         element: Cell::new(None),
         hovered: Cell::new(None),
         pressed: Cell::new(None),
@@ -134,12 +142,37 @@ pub fn show(
         }
     };
     let finish: Rc<dyn Fn(Outcome)> = Rc::new(finish);
+    snapper.take_elements(windows, elements);
     add_pointer_controllers(&view, &snapper, &finish);
     add_key_controller(&window, &view, &snapper, &finish);
 
+    time_first_paint(&window);
     window.fullscreen();
     window.present();
     view.grab_focus();
+    crate::timing::mark("overlay presented");
+}
+
+/// For `SHAREZ_TIMING`: notes when the overlay is mapped and when its first frame is drawn.
+fn time_first_paint(window: &gtk::Window) {
+    window.connect_map(|window| {
+        crate::timing::mark("overlay mapped");
+        let Some(clock) = window.frame_clock() else {
+            return;
+        };
+        let handler = Rc::new(Cell::new(None));
+        let id = clock.connect_after_paint(glib::clone!(
+            #[strong]
+            handler,
+            move |clock| {
+                crate::timing::mark("overlay painted");
+                if let Some(id) = handler.take() {
+                    clock.disconnect(id);
+                }
+            }
+        ));
+        handler.set(Some(id));
+    });
 }
 
 fn selection(view: &View, pixels: PixelRect) -> Selection {
@@ -273,10 +306,11 @@ fn add_key_controller(
 }
 
 /// Works out what the pointer is over. Windows come from the list taken before the overlay
-/// opened; elements are looked up live, one request at a time, always for the latest position.
+/// opened; elements are looked up live, one request at a time, always for the latest position,
+/// once the accessibility trees have been read.
 struct Snapper {
-    targets: Vec<Target>,
-    elements: Option<Elements>,
+    targets: RefCell<Vec<Target>>,
+    elements: RefCell<Option<Elements>>,
     /// The element last found, and the target it belongs to.
     element: Cell<Option<(usize, Rect)>>,
     /// The target the highlight belongs to.
@@ -288,8 +322,25 @@ struct Snapper {
 }
 
 impl Snapper {
+    /// Snaps inside windows once the accessibility trees arrive.
+    fn take_elements(self: &Rc<Self>, windows: Vec<Window>, elements: LateElements) {
+        let this = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let Some(elements) = elements.await else {
+                return;
+            };
+            let Some(this) = this.upgrade() else {
+                return; // The overlay closed first.
+            };
+            // The same windows in the same order, so `hovered` and `pressed` still hold.
+            this.targets.replace(elements.targets(windows));
+            this.elements.replace(Some(elements));
+        });
+    }
+
     fn target_at(&self, x: f64, y: f64) -> Option<usize> {
         self.targets
+            .borrow()
             .iter()
             .position(|t| t.window.kind != WindowKind::Desktop && t.visible.contains(x, y))
     }
@@ -302,8 +353,7 @@ impl Snapper {
     fn picked(&self) -> Option<Window> {
         self.pressed
             .get()
-            .and_then(|t| self.targets.get(t))
-            .map(|t| t.window.clone())
+            .and_then(|t| self.targets.borrow().get(t).map(|t| t.window.clone()))
     }
 
     /// Highlights `r`, part of target `t`.
@@ -330,14 +380,15 @@ impl Snapper {
             (Some(t), Some((et, r))) if t == et && r.contains(x, y) => {}
             (Some(t), _) => {
                 self.element.set(None);
-                self.set_hover(view, Some(t), Some(self.targets[t].visible));
+                let visible = self.targets.borrow()[t].visible;
+                self.set_hover(view, Some(t), Some(visible));
             }
             (None, _) => {
                 self.element.set(None);
                 self.set_hover(view, None, None);
             }
         }
-        if target.is_some() && self.elements.is_some() && !self.busy.replace(true) {
+        if target.is_some() && self.elements.borrow().is_some() && !self.busy.replace(true) {
             let this = Rc::clone(self);
             let view = view.clone();
             glib::spawn_future_local(async move {
@@ -348,13 +399,16 @@ impl Snapper {
     }
 
     async fn look_up_elements(&self, view: &View) {
-        let elements = self.elements.as_ref().expect("checked by caller");
+        let Some(elements) = self.elements.borrow().clone() else {
+            return;
+        };
         loop {
             let (x, y) = self.pointer.get();
             let Some(t) = self.target_at(x, y) else {
                 return;
             };
-            let path = elements.elements_at(&self.targets[t], x, y).await;
+            let target = self.targets.borrow()[t].clone();
+            let path = elements.elements_at(&target, x, y).await;
             // The pointer may have moved on while the app answered.
             let now = self.pointer.get();
             if now != (x, y) {
@@ -365,7 +419,7 @@ impl Snapper {
                 self.set_hover(
                     view,
                     Some(t),
-                    inner.intersection(&self.targets[t].visible).or(Some(inner)),
+                    inner.intersection(&target.visible).or(Some(inner)),
                 );
             }
             return;

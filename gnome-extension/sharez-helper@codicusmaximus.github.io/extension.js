@@ -1,5 +1,5 @@
 // ShareZ Helper: answers GetWindows with the windows on the active workspace, topmost first,
-// renders one of them on its own with CaptureWindow, places ShareZ's recording outline with
+// renders one of them on its own with CaptureWindow, freezes the whole screen with CaptureScreen, places ShareZ's recording outline with
 // PlaceWindow, focuses ShareZ's clipboard window with FocusWindow, and shows ShareZ's icon in the top bar while ShareZ runs. Mutter gives normal Wayland clients neither window positions nor stacking order,
 // nor a way to position their own windows, and GNOME has no tray for them.
 
@@ -29,6 +29,9 @@ const IFACE = `
     <method name="GetWindows">
       <arg type="s" direction="out" name="json"/>
     </method>
+    <method name="CaptureScreen">
+      <arg type="aay" direction="out" name="strips"/>
+    </method>
     <method name="CaptureWindow">
       <arg type="u" direction="in" name="id"/>
       <arg type="ay" direction="out" name="png"/>
@@ -52,6 +55,37 @@ const IFACE = `
 const rect = r => [r.x, r.y, r.width, r.height];
 
 Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+Gio._promisify(Shell.Screenshot.prototype, 'screenshot_stage_to_content');
+Gio._promisify(Gio.DBusConnection.prototype, 'call');
+
+// CaptureScreen encodes the screen as this many PNG strips at most, side by side on GNOME's
+// worker threads. Encoding a busy 4K screen as one PNG takes GNOME about two seconds.
+const MAX_STRIPS = 8;
+
+// Whether a D-Bus call comes from the process that runs ShareZ (which owns its app ID's name,
+// though it may call from another connection).
+async function fromShareZ(invocation) {
+    const pid = async (name) => {
+        const [p] = (await Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus',
+            'org.freedesktop.DBus', 'GetConnectionUnixProcessID', new GLib.Variant('(s)', [name]),
+            new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, -1, null)).deepUnpack();
+        return p;
+    };
+    try {
+        return await pid(APP_ID) === await pid(invocation.get_sender());
+    } catch {
+        return false; // ShareZ isn't running.
+    }
+}
+
+// Encodes `height` rows of `texture` from `y` down as a PNG, on one of GNOME's worker threads.
+async function encodeRows(texture, y, height, scale) {
+    const stream = Gio.MemoryOutputStream.new_resizable();
+    await Shell.Screenshot.composite_to_stream(texture, 0, y, texture.get_width(), height, scale,
+        null, 0, 0, 1, stream);
+    stream.close(null);
+    return GLib.Variant.new_from_bytes(new GLib.VariantType('ay'), stream.steal_as_bytes(), true);
+}
 
 function kind(w) {
     switch (w.get_window_type()) {
@@ -94,7 +128,7 @@ export default class ShareZHelperExtension extends Extension {
     }
 
     Features() {
-        return ['windows', 'place', 'indicator', 'capture-window', 'focus'];
+        return ['windows', 'place', 'indicator', 'capture-window', 'focus', 'capture-screen'];
     }
 
     SetRecording(recording) {
@@ -182,6 +216,29 @@ export default class ShareZHelperExtension extends Extension {
             const png = stream.steal_as_bytes().toArray();
             const area = rect(actor.meta_window.get_buffer_rect());
             invocation.return_value(new GLib.Variant('(ay(iiii))', [png, area]));
+        } catch (e) {
+            invocation.return_dbus_error(`${BUS_NAME}.Error.Failed`, e.message);
+        }
+    }
+
+    // Freezes the whole screen as ShareZ's region overlay needs it, without the screenshot portal:
+    // that has GNOME encode the screen as one PNG on one thread and save it to disk, which takes
+    // seconds on a busy 4K screen. Answers the screen, in buffer pixels, as PNG strips from the
+    // top down. Only ShareZ itself may ask, since this skips the portal's permission check.
+    async CaptureScreenAsync(_params, invocation) {
+        try {
+            if (!await fromShareZ(invocation))
+                throw new Error('Only ShareZ may capture the screen');
+            const [content, scale] = await new Shell.Screenshot().screenshot_stage_to_content();
+            const texture = content.get_texture();
+            const height = texture.get_height();
+            const count = Math.max(1, Math.min(MAX_STRIPS, GLib.get_num_processors()));
+            const rows = Math.ceil(height / count);
+            const strips = [];
+            for (let y = 0; y < height; y += rows)
+                strips.push(encodeRows(texture, y, Math.min(rows, height - y), scale));
+            const array = GLib.Variant.new_array(new GLib.VariantType('ay'), await Promise.all(strips));
+            invocation.return_value(GLib.Variant.new_tuple([array]));
         } catch (e) {
             invocation.return_dbus_error(`${BUS_NAME}.Error.Failed`, e.message);
         }
