@@ -51,9 +51,13 @@ pub struct Selection {
     /// window's own pixels under the selection, without whatever covered it. `None` if the
     /// desktop couldn't give them.
     pub window_image: Option<Frame>,
+    /// Alt was held when the mouse was released: open the region in the annotator.
+    pub annotate: bool,
 }
 
 type Done = Box<dyn FnOnce(Option<Selection>)>;
+/// Ends the overlay with what the selector decided, and whether to annotate the result.
+type Finish = Rc<dyn Fn(Outcome, bool)>;
 
 /// Opens the overlay. `done` gets the chosen region, or `None` if cancelled, just before the
 /// overlay closes.
@@ -107,7 +111,7 @@ pub fn show(
         let view = view.clone();
         let snapper = Rc::clone(&snapper);
         let closing = Cell::new(false);
-        move |outcome: Outcome| {
+        move |outcome: Outcome, annotate: bool| {
             if closing.get() {
                 return;
             }
@@ -117,7 +121,10 @@ pub fn show(
                 Outcome::Cancel => return close(None),
                 Outcome::Nothing | Outcome::Redraw => return,
             };
-            let selection = selection(&view, pixels);
+            let selection = Selection {
+                annotate,
+                ..selection(&view, pixels)
+            };
             let Some(picked) = picked else {
                 return close(Some(selection));
             };
@@ -141,7 +148,7 @@ pub fn show(
             });
         }
     };
-    let finish: Rc<dyn Fn(Outcome)> = Rc::new(finish);
+    let finish: Finish = Rc::new(finish);
     snapper.take_elements(windows, elements);
     add_pointer_controllers(&view, &snapper, &finish);
     add_key_controller(&window, &view, &snapper, &finish);
@@ -187,10 +194,11 @@ fn selection(view: &View, pixels: PixelRect) -> Selection {
         ),
         screen: Rect::new(0.0, 0.0, f64::from(view.width()), f64::from(view.height())),
         window_image: None,
+        annotate: false,
     }
 }
 
-fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn Fn(Outcome)>) {
+fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Finish) {
     let motion = gtk::EventControllerMotion::new();
     motion.connect_motion(glib::clone!(
         #[weak]
@@ -198,11 +206,11 @@ fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn F
         #[strong]
         snapper,
         move |c, x, y| {
-            let square = c
-                .current_event_state()
-                .contains(gdk::ModifierType::SHIFT_MASK);
+            let state = c.current_event_state();
+            let square = state.contains(gdk::ModifierType::SHIFT_MASK);
+            let move_frame = state.contains(gdk::ModifierType::CONTROL_MASK);
             let (bx, by) = view.to_buffer(x, y);
-            view.update(|s| s.motion(bx, by, square));
+            view.update(|s| s.motion(bx, by, square, move_frame));
             snapper.hover(&view, x, y);
         }
     ));
@@ -230,8 +238,11 @@ fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn F
             let Some((x, y)) = g.start_point() else {
                 return;
             };
+            let annotate = g
+                .current_event_state()
+                .contains(gdk::ModifierType::ALT_MASK);
             let (bx, by) = view.to_buffer(x + dx, y + dy);
-            finish(view.update(|s| s.release(bx, by)));
+            finish(view.update(|s| s.release(bx, by)), annotate);
         }
     ));
     view.add_controller(drag);
@@ -250,7 +261,7 @@ fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn F
         view,
         #[strong]
         finish,
-        move |_, _, _, _| finish(view.update(selector::Selector::right_release))
+        move |_, _, _, _| finish(view.update(selector::Selector::right_release), false)
     ));
     view.add_controller(right);
 
@@ -268,12 +279,7 @@ fn add_pointer_controllers(view: &View, snapper: &Rc<Snapper>, finish: &Rc<dyn F
     view.add_controller(scroll);
 }
 
-fn add_key_controller(
-    window: &gtk::Window,
-    view: &View,
-    snapper: &Rc<Snapper>,
-    finish: &Rc<dyn Fn(Outcome)>,
-) {
+fn add_key_controller(window: &gtk::Window, view: &View, snapper: &Rc<Snapper>, finish: &Finish) {
     let opened = Instant::now();
     let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed(glib::clone!(
@@ -286,6 +292,10 @@ fn add_key_controller(
         #[upgrade_or]
         glib::Propagation::Proceed,
         move |_, key, _, _| {
+            if is_ctrl(key) {
+                view.update(|s| s.set_moving(true));
+                return glib::Propagation::Proceed;
+            }
             if opened.elapsed() < INPUT_DELAY {
                 return glib::Propagation::Stop;
             }
@@ -298,11 +308,25 @@ fn add_key_controller(
                 gdk::Key::space => Key::Space,
                 _ => return glib::Propagation::Proceed,
             };
-            finish(view.update(|s| s.key(key)));
+            finish(view.update(|s| s.key(key)), false);
             glib::Propagation::Stop
         }
     ));
+    // Ctrl alone shows or hides the corner magnifiers without waiting for the mouse to move.
+    keys.connect_key_released(glib::clone!(
+        #[weak]
+        view,
+        move |_, key, _, _| {
+            if is_ctrl(key) {
+                view.update(|s| s.set_moving(false));
+            }
+        }
+    ));
     window.add_controller(keys);
+}
+
+fn is_ctrl(key: gdk::Key) -> bool {
+    matches!(key, gdk::Key::Control_L | gdk::Key::Control_R)
 }
 
 /// Works out what the pointer is over. Windows come from the list taken before the overlay

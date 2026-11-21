@@ -179,7 +179,28 @@ impl<'a> Painter<'a> {
             self.centre_cross(&r);
             self.size_label(sel, &r);
         }
-        self.magnifier();
+        match selection.filter(|_| self.state.selector.moving()) {
+            // While moving, one magnifier on each corner, outside the region, so every edge can be
+            // lined up at once.
+            Some(sel) => {
+                let (left, top) = (sel.x, sel.y);
+                let right = sel.x + sel.width.saturating_sub(1);
+                let bottom = sel.y + sel.height.saturating_sub(1);
+                for (corner, outward) in [
+                    ((left, top), (false, false)),
+                    ((right, top), (true, false)),
+                    ((left, bottom), (false, true)),
+                    ((right, bottom), (true, true)),
+                ] {
+                    self.magnifier(corner, outward);
+                }
+            }
+            None => {
+                if let Some(pixel) = self.state.selector.pointer_pixel() {
+                    self.magnifier(pixel, (true, true));
+                }
+            }
+        }
     }
 
     fn dim_outside(&self, r: &graphene::Rect) {
@@ -283,10 +304,9 @@ impl<'a> Painter<'a> {
         self.panel(&layout, r.x().clamp(0.0, (self.width - w).max(0.0)), y);
     }
 
-    fn magnifier(&self) {
-        let Some((bx, by)) = self.state.selector.pointer_pixel() else {
-            return;
-        };
+    /// A magnifier centred on buffer pixel `bx`/`by`, placed to the right and below it, or to the
+    /// left and above as `(right, down)` says, flipping where it would leave the screen.
+    fn magnifier(&self, (bx, by): (u32, u32), (right, down): (bool, bool)) {
         let n = self.state.selector.magnifier_pixels() as f32;
         let size = MAGNIFIER_SIZE;
         let cell = size / n;
@@ -294,16 +314,19 @@ impl<'a> Painter<'a> {
         let (info_w, info_h) = Self::panel_size(&info);
         let total_h = size + 2.0 + PANEL_GAP + info_h;
 
-        // Down and to the right of the cursor, flipping where it would leave the screen.
         let (cx, cy) = ((bx as f32 + 0.5) / self.sx, (by as f32 + 0.5) / self.sy);
-        let mut x = cx + MAGNIFIER_OFFSET;
-        if x + size + 2.0 > self.width {
-            x = cx - MAGNIFIER_OFFSET - size - 2.0;
-        }
-        let mut y = cy + MAGNIFIER_OFFSET;
-        if y + total_h > self.height {
-            y = cy - MAGNIFIER_OFFSET - total_h;
-        }
+        let place = |c: f32, extent: f32, forward: bool, limit: f32| {
+            let after = c + MAGNIFIER_OFFSET;
+            let before = c - MAGNIFIER_OFFSET - extent;
+            let fits = if forward {
+                after + extent <= limit
+            } else {
+                before >= 0.0
+            };
+            if forward == fits { after } else { before }
+        };
+        let x = place(cx, size + 2.0, right, self.width);
+        let y = place(cy, total_h, down, self.height);
         let (x, y) = (
             (x / self.px).round() * self.px,
             (y / self.px).round() * self.px,

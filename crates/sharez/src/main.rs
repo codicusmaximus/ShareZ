@@ -1024,6 +1024,8 @@ async fn select_region(ui: &Ui, purpose: Purpose) -> Result<Option<Picked>, Stri
                         Some(image) => Ok(image),
                         None => output::crop(&frame, selection.pixels),
                     };
+                    // Not copied on its way to the annotator: the annotated one is what's wanted.
+                    let copy = copy && !selection.annotate;
                     Some(image.map(|i| if copy { output::copy_frame(i) } else { i }))
                 }
             },
@@ -1085,9 +1087,13 @@ async fn focus_and_copy(ui: &Ui, path: &std::path::Path) {
     let _ = rx.recv().await;
 }
 
+/// A screenshot, and whether the user held Alt to send it to the annotator (and so it wasn't
+/// copied).
+type Taken = (Frame, bool);
+
 /// Takes a screenshot the way `capture` says, copied already when `copy`. `None` if the user
 /// cancelled.
-async fn take(ui: &Ui, capture: Capture, copy: bool) -> Result<Option<Frame>, String> {
+async fn take(ui: &Ui, capture: Capture, copy: bool) -> Result<Option<Taken>, String> {
     let image = match capture {
         Capture::Region | Capture::Record => {
             let Some(picked) = select_region(ui, Purpose::Screenshot { copy }).await? else {
@@ -1097,7 +1103,11 @@ async fn take(ui: &Ui, capture: Capture, copy: bool) -> Result<Option<Frame>, St
                 pixels: picked.selection.pixels,
                 screen: picked.screen,
             }));
-            return picked.image.transpose();
+            let annotate = picked.selection.annotate;
+            return picked
+                .image
+                .transpose()
+                .map(|image| image.map(|i| (i, annotate)));
         }
         Capture::Screen => freeze_screen(ui).await?,
         Capture::LastRegion => {
@@ -1117,8 +1127,8 @@ async fn take(ui: &Ui, capture: Capture, copy: bool) -> Result<Option<Frame>, St
         }
     };
     match image {
-        Some(image) if copy => Ok(Some(flash_and_copy(ui, image).await)),
-        image => Ok(image),
+        Some(image) if copy => Ok(Some((flash_and_copy(ui, image).await, false))),
+        image => Ok(image.map(|i| (i, false))),
     }
 }
 
@@ -1134,11 +1144,14 @@ async fn screenshot(ui: &Rc<Ui>, capture: Capture, after: After) {
     if shown {
         ui.window.present();
     }
-    let image = match taken {
-        Ok(Some(image)) => image,
+    let (image, alt) = match taken {
+        Ok(Some(taken)) => taken,
         Ok(None) => return,
         Err(e) => return ui.fail("Capture Failed", &e),
     };
+    if alt {
+        return annotate(ui, image, shown);
+    }
     match after {
         After::Ask => ask(ui, image, shown),
         After::Annotate => annotate(ui, image, shown),
