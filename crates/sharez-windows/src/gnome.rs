@@ -77,10 +77,15 @@ pub async fn helper_features() -> Vec<String> {
 const HELPER_UUID: &str = "sharez-helper@codicusmaximus.github.io";
 /// `ExtensionState.ACTIVE` in GNOME Shell's extension API.
 const ACTIVE: f64 = 1.0;
+/// `ExtensionState.OUT_OF_DATE`: the extension doesn't list the running GNOME version.
+const OUT_OF_DATE: f64 = 4.0;
 
 /// Turns the helper extension on when it is installed but off, as it is after a package install.
 /// GNOME only knows about extensions installed before the session started, so a new install
 /// takes effect after the next login. `Ok(true)` if it was turned on now.
+///
+/// [`Error::HelperOutOfDate`] when GNOME refuses the copy it found, such as an old one in
+/// `~/.local/share` (from `install.sh` or a hand install) that hides the packaged one.
 pub async fn enable_helper() -> Result<bool> {
     let conn = Connection::session().await?;
     let (dest, path, iface) = (
@@ -102,6 +107,13 @@ pub async fn enable_helper() -> Result<bool> {
     };
     if (state - ACTIVE).abs() < f64::EPSILON {
         return Ok(false);
+    }
+    if (state - OUT_OF_DATE).abs() < f64::EPSILON {
+        let path = info
+            .get("path")
+            .and_then(|v| <&str>::try_from(&**v).ok())
+            .unwrap_or_default();
+        return Err(Error::HelperOutOfDate(path.to_owned()));
     }
     call(&conn, dest, path, iface, "EnableExtension", &(HELPER_UUID,)).await
 }

@@ -39,6 +39,9 @@ pub enum Error {
     Png(#[from] sharez_core::png::Error),
     #[error("this desktop can't capture single windows")]
     Unsupported,
+    /// GNOME won't load the helper extension at `0`: it doesn't list this GNOME version.
+    #[error("GNOME says the ShareZ Helper in {0} is out of date")]
+    HelperOutOfDate(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

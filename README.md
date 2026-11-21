@@ -235,6 +235,20 @@ is installed, on, and up to date (log out and back in after updating ShareZ): wi
 screenshot portal encodes the whole screen as one PNG first, which takes seconds on a busy 4K
 screen. To see where the time goes, start ShareZ with `SHAREZ_TIMING=1 sharez` from a terminal.
 
+**No outline while recording, recordings aren't copied, or windows don't snap (GNOME).** These
+need the ShareZ Helper extension. Run `gnome-extensions info sharez-helper@codicusmaximus.github.io`.
+If its state is OUT OF DATE and its path is in `~/.local/share`, that's an old copy from
+`./install.sh` or a hand install, and GNOME loads it instead of the packaged one. Delete it, then
+log out and back in:
+
+```sh
+rm -rf ~/.local/share/gnome-shell/extensions/sharez-helper@codicusmaximus.github.io
+```
+
+If you installed with `./install.sh` and later switched to a package, also remove
+`~/.local/bin/sharez` and `~/.local/share/applications/io.github.codicusmaximus.ShareZ.desktop`
+so the packaged ShareZ runs. ShareZ shows a notification when GNOME finds the helper out of date.
+
 ## Building
 
 You need Rust 1.92 or newer, and GTK 4.14+, libadwaita 1.5+ and GStreamer 1.20+ development

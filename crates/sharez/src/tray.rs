@@ -4,7 +4,7 @@
 //! ShareZ runs and calls the app's actions from its menu. Everywhere else (KDE, most X11 desktops,
 //! GNOME with the AppIndicator extension) ShareZ publishes a StatusNotifierItem.
 
-use gtk::glib;
+use gtk::{gio, glib, prelude::*};
 use ksni::TrayMethods;
 use sharez_core::{Desktop, Session};
 
@@ -19,13 +19,21 @@ pub enum Tray {
 
 impl Tray {
     /// Shows the icon. Its menu sends action names to `actions`. `None` if there is nowhere to
-    /// show it.
-    pub async fn start(session: &Session, actions: async_channel::Sender<Action>) -> Option<Self> {
+    /// show it. `app` tells the user when GNOME won't load the helper extension.
+    pub async fn start(
+        session: &Session,
+        app: &impl IsA<gio::Application>,
+        actions: async_channel::Sender<Action>,
+    ) -> Option<Self> {
         if session.desktop == Desktop::Gnome {
             match sharez_windows::enable_helper().await {
                 // Give the shell a moment to load it.
                 Ok(true) => glib::timeout_future(std::time::Duration::from_millis(500)).await,
                 Ok(false) => {}
+                Err(sharez_windows::Error::HelperOutOfDate(path)) => {
+                    eprintln!("GNOME won't load the ShareZ Helper in {path}: it is out of date.");
+                    app.send_notification(Some("helper-out-of-date"), &out_of_date(&path));
+                }
                 Err(e) => eprintln!("Could not check the ShareZ Helper extension: {e}"),
             }
         }
@@ -75,6 +83,25 @@ impl Tray {
             }
         }
     }
+}
+
+/// Without the helper, the recording outline, copying recordings and window snapping stop
+/// working, which is easy to miss; the usual cause is an old copy in the home folder.
+fn out_of_date(path: &str) -> gio::Notification {
+    let n = gio::Notification::new("ShareZ Helper is out of date");
+    let home = glib::home_dir();
+    let body = if !path.is_empty() && std::path::Path::new(path).starts_with(&home) {
+        format!(
+            "GNOME is loading an old copy from {path} instead of the one ShareZ installed. \
+             Delete that folder, then log out and back in."
+        )
+    } else {
+        "It doesn't support this GNOME version yet, so the recording outline, copying \
+         recordings and window snapping are off. Updating ShareZ may fix this."
+            .to_owned()
+    };
+    n.set_body(Some(&body));
+    n
 }
 
 pub struct Sni {
