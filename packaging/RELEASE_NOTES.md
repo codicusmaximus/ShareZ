@@ -2,6 +2,9 @@ ShareZ captures screenshots and recordings of regions, windows and elements insi
 
 ## What's new
 
+- **Move a region while you draw it.** Hold Ctrl while dragging out a region to move the whole box with the pointer, with a magnifier on every corner so you can line up each edge. Let go of Ctrl to keep resizing from where you moved it.
+- **Alt sends a capture straight to the annotator.** Hold Alt as you release the mouse and the screenshot opens in the annotator instead of doing the hotkey's usual step.
+- **Recording outline works on GNOME 51.** Fedora 45's GNOME refused to load ShareZ's top-bar extension, so the outline around a recording disappeared. ShareZ now supports it.
 - **Screenshots start much faster on GNOME.** The region overlay used to take a couple of seconds to appear on a big or busy screen, because GNOME encoded the whole screen as one image before ShareZ could show it. ShareZ's top-bar extension now grabs the screen itself, split into pieces that are prepared at the same time, and the overlay no longer waits for slow apps before it lets you pick a window. Log out and back in once after upgrading so GNOME loads the updated extension.
 - **Recordings copy on GNOME.** Stopping a recording from the top bar, a shortcut or the tray sometimes left the clipboard holding whatever was there before. The copied recording now always lands on the clipboard.
 - **Recordings paste into Discord and Telegram.** Pasting a copied recording into Discord, Telegram or some Flatpak apps did not attach the video. ShareZ now offers the file the way those apps expect, so it arrives as an attachment you can send.
